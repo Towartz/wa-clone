@@ -7,6 +7,8 @@ A Python utility for creating customized clones of WhatsApp and WhatsApp Busines
 
 ## 📋 Overview
 
+![Preview Script](https://i.imgur.com/VxlnT73.png)
+
 This tool allows you to create modified clones of WhatsApp applications by replacing package names and resource references in `.smali` and `.xml` files from a decompiled APK. It supports both regular WhatsApp and WhatsApp Business applications.
 
 ## ✨ Features
