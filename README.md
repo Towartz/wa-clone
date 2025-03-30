@@ -29,7 +29,7 @@ This tool allows you to create modified clones of WhatsApp applications by repla
 
 ## Termux
 ```bash
-pkg install python
+pkg install python git -y
 ```
 
 ## 📚 Required Libraries
