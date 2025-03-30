@@ -24,6 +24,11 @@ This tool allows you to create modified clones of WhatsApp applications by repla
 - Python 3.x or higher
 - Decompiled WhatsApp or WhatsApp Business APK (using APKTool or similar)
 
+## Termux
+```bash
+pkg install python
+```
+
 ## 📚 Required Libraries
 
 ```bash
