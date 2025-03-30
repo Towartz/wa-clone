@@ -4,6 +4,16 @@ A Python utility for creating customized clones of WhatsApp and WhatsApp Busines
 
 ![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![Python](https://img.shields.io/badge/python-3.x-green)
+<div align="center">
+  <a href="https://f-droid.org/id/packages/com.termux/">
+    <img src="https://f-droid.org/repo/com.termux/en-US/icon_7jMZ7XD80oeucmGEaTwktIRZexLtGWvJfKdVD6Wu2SI=.png" width="120" height="120" alt="Termux">
+    <br>
+    <img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80">
+  </a>
+  <br>
+  <b>Termux: Terminal emulator and Linux environment for Android</b>
+</div>
+
 ## Tutorial YouTube (Click Image below to view)
 
 [![Tutorial: Decompile & Clone WhatsApp like GBWhatsApp](https://img.youtube.com/vi/oYjPnrckKdk/0.jpg)](https://www.youtube.com/watch?v=oYjPnrckKdk)
