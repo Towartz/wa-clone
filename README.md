@@ -4,8 +4,9 @@ A Python utility for creating customized clones of WhatsApp and WhatsApp Busines
 
 ![Version](https://img.shields.io/badge/version-2.1.0-blue)
 ![Python](https://img.shields.io/badge/python-3.x-green)
-## Tutorial
-<iframe width="507" height="901" src="https://www.youtube.com/embed/oYjPnrckKdk" title="[ Tutorial ] Decompile &amp; Clone WhatsApp like GBWhatsApp" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+## Tutorial YouTube (Click Image below to view)
+
+[![Tutorial: Decompile & Clone WhatsApp like GBWhatsApp](https://img.youtube.com/vi/oYjPnrckKdk/0.jpg)](https://www.youtube.com/watch?v=oYjPnrckKdk)
 
 ## 📋 Overview
 
