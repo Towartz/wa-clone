@@ -78,22 +78,29 @@ OPTIONS:
                           1 = WhatsApp
                           2 = WhatsApp Business
 
-    --mode INT           Select operation mode:
+    --mode INT            Select operation mode:
                           1 = Auto (uses default package names)
                           2 = Custom (lets you specify custom package names)
+                          3 = Custom ALL (fully customize including search patterns)
 
-    --package STRING     New package name without 'com'
-                          (Required with --mode 2)
+    --package STRING      New package name without 'com'
+                          (Required with --mode 2 or 3)
 
-    --name STRING        New folder name
-                          (Required with --mode 2)
+    --name STRING         New folder name
+                          (Required with --mode 2 or 3)
+                          
+    --search-pattern STRING  Custom search pattern for package
+                          (Only with --mode 3)
 
-    --workers INT        Number of worker threads for parallel processing
+    --workers INT         Number of worker threads for parallel processing
                           (Default: 4)
 
-    -h, --help           Display this help message
+    -h, --help            Display this help message
 
 EXAMPLES:
+    # Process with fully custom settings including search pattern
+    python whatsapp_clone.py /path/to/decompiled --whatsapp-type 1 --mode 3 --package mywhatsapp --name MyWhatsApp --search-pattern "com.whatsapp"
+
     # Run interactively (will prompt for all options)
     python whatsapp_clone.py
 
@@ -136,6 +143,7 @@ class WhatsAppCloneConfig:
         self.new_package_name: str = ""
         self.new_folder_name: str = ""
         self.new_package_name_path: str = ""
+        self.custom_search_pattern: str = ""
         self.max_workers: int = 8  
         
     def get_config_table(self) -> Table:
@@ -147,6 +155,8 @@ class WhatsAppCloneConfig:
         table.add_row("New package name", self.new_package_name)
         table.add_row("New folder name", self.new_folder_name)
         table.add_row("Package path format", self.new_package_name_path)
+        if self.custom_search_pattern:
+            table.add_row("Custom search pattern", self.custom_search_pattern)
         return table
         
     def __str__(self) -> str:
@@ -228,9 +238,25 @@ class SmaliProcessor(FileProcessor):
         
         # Different patterns for WhatsApp Business to properly handle both
         # WhatsApp and WhatsApp Business patterns
-        if "Business" in self.config.current_folder_name:
-            self.package_pattern1 = re.compile(r'com(/)whatsapp(/w4b)?')
-            self.package_pattern2 = re.compile(r'com(\.)whatsapp(\.w4b)?')
+        if hasattr(self.config, 'custom_search_pattern') and self.config.custom_search_pattern:
+            # Create patterns from the custom search pattern
+            custom_pattern = re.escape(self.config.custom_search_pattern)
+            # Replace dots with regex to match either dots or slashes
+            custom_pattern_slash = custom_pattern.replace('\\\.', '(/)')
+            custom_pattern_dot = custom_pattern.replace('\\\.', '(\\.)')
+            
+            self.package_pattern1 = re.compile(custom_pattern_slash)
+            self.package_pattern2 = re.compile(custom_pattern_dot)
+        else:
+            # Default patterns for regular WhatsApp
+            self.package_pattern1 = re.compile(r'com(/)whatsapp')
+            self.package_pattern2 = re.compile(r'com(\.)whatsapp')
+            
+            # Different patterns for WhatsApp Business to properly handle both
+            # WhatsApp and WhatsApp Business patterns
+            if "Business" in self.config.current_folder_name:
+                self.package_pattern1 = re.compile(r'com(/)whatsapp(/w4b)?')
+                self.package_pattern2 = re.compile(r'com(\.)whatsapp(\.w4b)?')
         
         self.official_package_pattern = re.compile(
             r'(\.)' + re.escape(self.config.new_package_name) + r'(\.)(' + OFFICIAL_MODULES + r')'
@@ -294,17 +320,17 @@ class XmlProcessor(FileProcessor):
     def __init__(self, config: WhatsAppCloneConfig):
         super().__init__(config)
         
-        if "Business" in self.config.current_folder_name:
-            self.package_pattern = re.compile(r'com\.whatsapp(\.w4b)?')
-            self.sticker_pattern = re.compile(r'android:name="com\.whatsapp(\.w4b)?\.sticker\.READ"')
+        if hasattr(self.config, 'custom_search_pattern') and self.config.custom_search_pattern:
+            # Use custom search pattern
+            self.package_pattern = re.compile(re.escape(self.config.custom_search_pattern))
+            self.sticker_pattern = re.compile(r'android:name="' + re.escape(self.config.custom_search_pattern) + r'\.sticker\.READ"')
         else:
-            self.package_pattern = re.compile(r'com\.whatsapp')
-            self.sticker_pattern = re.compile(r'android:name="com\.whatsapp\.sticker\.READ"')
-            
-        self.folder_pattern = re.compile(re.escape(self.config.current_folder_name))
-        self.official_package_pattern = re.compile(
-            r'(\.)' + re.escape(self.config.new_package_name) + r'(\.)(' + OFFICIAL_MODULES + r')'
-        )
+            if "Business" in self.config.current_folder_name:
+                self.package_pattern = re.compile(r'com\.whatsapp(\.w4b)?')
+                self.sticker_pattern = re.compile(r'android:name="com\.whatsapp(\.w4b)?\.sticker\.READ"')
+            else:
+                self.package_pattern = re.compile(r'com\.whatsapp')
+                self.sticker_pattern = re.compile(r'android:name="com\.whatsapp\.sticker\.READ"')
         
     def get_files(self) -> List[str]:
         return glob.glob(os.path.join(self.config.root_folder, "**", "*.xml"), recursive=True)
@@ -369,15 +395,16 @@ class WhatsAppCloner:
         parser = argparse.ArgumentParser(description="WhatsApp Clone Tool", add_help=False)
         parser.add_argument("folder", nargs="?", help="The root folder of the decompiled WhatsApp code")
         parser.add_argument(
-            "--whatsapp-type", type=int, choices=[1, 2], 
+            "--whatsapp-type", type=int, choices=[1, 2, 3], 
             help="WhatsApp type: 1 for WhatsApp, 2 for WhatsApp Business"
         )
         parser.add_argument(
-            "--mode", type=int, choices=[1, 2],
-            help="Mode: 1 for Auto, 2 for Custom"
+            "--mode", type=int, choices=[1, 2, 3],
+            help="Mode: 1 for Auto, 2 for Custom, 3 for Custom ALL"
         )
         parser.add_argument("--package", help="New package name without 'com'")
         parser.add_argument("--name", help="New folder name")
+        parser.add_argument("--search-pattern", help="Custom search pattern for package (Mode 3 only)")
         parser.add_argument(
             "--workers", type=int, default=4,
             help="Number of worker threads for parallel processing"
@@ -411,7 +438,7 @@ class WhatsAppCloner:
         if args.mode == 1:
             self.config.new_package_name = default_pkg
             self.config.new_folder_name = "WhatsApp" if args.whatsapp_type == 1 else "WhatsApp Business"
-        else:
+        elif args.mode == 2:
             if not args.package or not args.name:
                 if RICH_AVAILABLE:
                     console.print("[bold red]ERROR: --package and --name are required with --mode 2[/bold red]")
@@ -420,6 +447,16 @@ class WhatsAppCloner:
                 sys.exit(1)
             self.config.new_package_name = args.package
             self.config.new_folder_name = args.name
+        elif args.mode == 3:
+            if not args.package or not args.name or not args.search_pattern:
+                if RICH_AVAILABLE:
+                    console.print("[bold red]ERROR: --package, --name, and --search-pattern are required with --mode 3[/bold red]")
+                else:
+                    logger.error("--package, --name, and --search-pattern are required with --mode 3")
+                sys.exit(1)
+            self.config.new_package_name = args.package
+            self.config.new_folder_name = args.name
+            self.config.custom_search_pattern = args.search_pattern
             
         self.config.new_package_name_path = self.config.new_package_name.replace(".", "/")
     
@@ -464,22 +501,24 @@ class WhatsAppCloner:
         
         if RICH_AVAILABLE:
             console.print("\n[bold magenta]Mode?[/bold magenta]")
-            console.print("[blue]1. [green]Auto[/green][/blue]")
-            console.print("[blue]2. [green]Custom[/green][/blue]")
+            console.print("[blue]1. [green]Auto - Automatically uses the default configuration.[/green][/blue]")
+            console.print("[blue]2. [green]Custom WhatsApp Base - Clone the WhatsApp original base to Clone.[/green][/blue]")
+            console.print("[blue]3. [green]Custom ALL (Clone base of Cloned) - Fully customizable, Can Clone of Cloned Base[/green][/blue]")
             
             mode = Prompt.ask(
                 "[yellow]Type number[/yellow]",
-                choices=["1", "2"],
+                choices=["1", "2", "3"],
                 default="1"
             )
         else:
-            print("\nMode?")
-            print("1. Auto")
-            print("2. Custom")
+            print("\nSelect Mode:")
+            print("1. Auto - Automatically uses the default configuration.")
+            print("2. Custom WhatsApp Base - Clone the WhatsApp base to Clone.")
+            print("3. Custom ALL (Clone base of Cloned) - Fully customizable, Can Clone of Cloned Base")
             
             while True:
-                mode = input("\nType number (1 or 2): ")
-                if mode in ["1", "2"]:
+                mode = input("\nType number (1, 2, or 3): ")
+                if mode in ["1", "2", "3"]:
                     break
                 else:
                     print("Invalid selection. Please try again.")
@@ -487,7 +526,7 @@ class WhatsAppCloner:
         if mode == "1":
             self.config.new_package_name = default_pkg
             self.config.new_folder_name = self.config.current_folder_name
-        else:
+        elif mode == "2":
             if RICH_AVAILABLE:
                 self.config.new_package_name = Prompt.ask(
                     "[yellow]Enter the new package name without the 'com'[/yellow]",
@@ -500,7 +539,27 @@ class WhatsAppCloner:
             else:
                 self.config.new_package_name = input(f"Enter the new package name without the 'com': ") or default_pkg
                 self.config.new_folder_name = input(f"Enter the new folder name: ") or self.config.current_folder_name
-                
+        else:  # mode == "3"
+            if RICH_AVAILABLE:
+                self.config.new_package_name = Prompt.ask(
+                    "[yellow]Enter the new package name without the 'com'[/yellow]",
+                    default=default_pkg
+                )
+                self.config.new_folder_name = Prompt.ask(
+                    "[yellow]Enter the new folder name[/yellow]",
+                    default=self.config.current_folder_name
+                )
+                default_search = "com.universe.messenger" if self.config.current_folder_name == "WhatsApp" else "com.gbwhatsapp"
+                self.config.custom_search_pattern = Prompt.ask(
+                    "[yellow]Enter the custom search pattern (e.g. com.universe.messenger)[/yellow]",
+                    default=default_search
+                )
+            else:
+                self.config.new_package_name = input(f"Enter the new package name without the 'com': ") or default_pkg
+                self.config.new_folder_name = input(f"Enter the new folder name: ") or self.config.current_folder_name
+                default_search = "com.whatsapp" if self.config.current_folder_name == "WhatsApp" else "com.whatsapp.w4b"
+                self.config.custom_search_pattern = input(f"Enter the custom search pattern (default: {default_search}): ") or default_search
+                    
         self.config.new_package_name_path = self.config.new_package_name.replace(".", "/")
     
     def validate_config(self) -> bool:
