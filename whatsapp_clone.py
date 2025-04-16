@@ -332,6 +332,14 @@ class XmlProcessor(FileProcessor):
                 self.package_pattern = re.compile(r'com\.whatsapp')
                 self.sticker_pattern = re.compile(r'android:name="com\.whatsapp\.sticker\.READ"')
         
+        # Add the missing patterns
+        self.folder_pattern = re.compile(re.escape(self.config.current_folder_name))
+        
+        # Add the official_package_pattern similar to SmaliProcessor
+        self.official_package_pattern = re.compile(
+            r'(\.)' + re.escape(self.config.new_package_name) + r'(\.)(' + OFFICIAL_MODULES + r')'
+        )
+        
     def get_files(self) -> List[str]:
         return glob.glob(os.path.join(self.config.root_folder, "**", "*.xml"), recursive=True)
         
