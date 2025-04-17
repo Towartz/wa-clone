@@ -242,8 +242,8 @@ class SmaliProcessor(FileProcessor):
             # Create patterns from the custom search pattern
             custom_pattern = re.escape(self.config.custom_search_pattern)
             # Replace dots with regex to match either dots or slashes
-            custom_pattern_slash = custom_pattern.replace('\\\.', '(/)')
-            custom_pattern_dot = custom_pattern.replace('\\\.', '(\\.)')
+            custom_pattern_slash = custom_pattern.replace('\\.', '(/)')
+            custom_pattern_dot = custom_pattern.replace('\\.', '(\\.)')
             
             self.package_pattern1 = re.compile(custom_pattern_slash)
             self.package_pattern2 = re.compile(custom_pattern_dot)
