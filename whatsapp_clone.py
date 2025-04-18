@@ -11,7 +11,7 @@ Usage:
 
 Author: Python by YouTube@66XZD (デキ)
 Note : Ported from .bat and .ps1 script (not my own)
-Version: 2.1.0
+Version: 2.2.0
 """
 
 import os
@@ -53,7 +53,7 @@ OFFICIAL_MODULES = (
     "infra|jid|media|messagetranslation|nativelibloader|protocol|pytorch|stickers|"
     "superpack|unity|util|voipcalling|wamsys|executorch|gwpasan|"
     "voicetranscription|AppShell|GifHelper|Mp4Ops|NativeMediaHandler|SmbAppShell|"
-    "SqliteShell|StickyHeadersRecyclerView|VideoFrameConverter"
+    "SqliteShell|StickyHeadersRecyclerView|VideoFrameConverter|ohai|WaOhaiClient|productinfra|music|api|MusicApi" # add Fix Music status
 )
 
 def show_help():
@@ -380,7 +380,7 @@ class WhatsAppCloner:
     def display_intro(self):
         if RICH_AVAILABLE:
             title = Text("WhatsApp Clone Tool", style="bold cyan")
-            subtitle = Text("Script Version : v2.1.0", style="italic green")
+            subtitle = Text("Script Version : v2.2.0", style="italic green")
             
             description = Text("\nThis tool allows you to create modified clones of WhatsApp by customizing package names and resources xml.")
             author = Text("\nAuthor: YouTube@66XZD (デキ)", style="blue")
@@ -390,10 +390,10 @@ class WhatsAppCloner:
                 Text.assemble(title, "\n", subtitle, description, "\n", author, "\n", note),
                 border_style="cyan",
                 title="[bold white]WhatsApp Clone Tool[/bold white]",
-                subtitle="[white]v2.1.0[/white]"
+                subtitle="[white]v2.2.0[/white]"
             ))
         else:
-            print("\n=== WhatsApp Clone Tool - v2.1.0 ===")
+            print("\n=== WhatsApp Clone Tool - v2.2.0 ===")
             print("\nThis tool allows you to create modified clones of WhatsApp by customizing package names and resources xml.")
             print("\nAuthor: YouTube@66XZD (デキ)")
             print("Note: Ported from .bat and .ps1 script (not my own)")
