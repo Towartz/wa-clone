@@ -2,7 +2,7 @@
 
 A Python utility for creating customized clones of WhatsApp and WhatsApp Business applications by modifying package names and resources in decompiled APK files.
 
-![Version](https://img.shields.io/badge/version-2.1.0-blue)
+![Version](https://img.shields.io/badge/version-2.2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.x-green)
 <div align="center">
   <a href="https://f-droid.org/id/packages/com.termux/">
