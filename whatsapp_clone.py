@@ -182,16 +182,7 @@ def render_progress_bar(task_name: str, current: int, total: int, start_time: fl
         sys.stdout.flush()
 
 
-# Whitelist of official Meta / WhatsApp submodules whose class bytecode namespaces should remain un-renamed
-OFFICIAL_MODULES = (
-    "aborthooks|accesslibraryprovider|accountswitching|adscreation|anr|audioRecording|"
-    "backup|bloks|breakpad|calling|companiondevice|crossapp|executorch|fieldstats|filter|"
-    "foa|garmin|gwpasan|infra|instrumentation|jid|litex|media|messagedrafts|messagetranslation|"
-    "mlkit|music|MusicApi|NativeMediaHandler|nativelibloader|ohai|orbit|pixel|productinfra|"
-    "protocol|pytorch|stickers|superpack|unity|util|voicetranscription|voipcalling|wfl|"
-    "wamsys|WaOhaiClient|waquickpromotionclient|AppShell|GifHelper|Mp4Ops|SmbAppShell|"
-    "SqliteShell|StickyHeadersRecyclerView|VideoFrameConverter"
-)
+
 
 
 def show_help():
@@ -352,13 +343,6 @@ class SmaliProcessor(FileProcessor):
         self.pattern_slash = re.compile(re.escape(base_slash))
         self.new_dot = new_dot
         self.new_slash = new_slash
-
-        self.official_dot_pattern = re.compile(
-            r'(\.)' + re.escape(self.config.new_package_name) + r'(\.)(' + OFFICIAL_MODULES + r')'
-        )
-        self.official_slash_pattern = re.compile(
-            r'(\.|/)' + re.escape(self.config.new_package_name_path) + r'(\.|/)(' + OFFICIAL_MODULES + r')'
-        )
     
     def get_files(self) -> List[str]:
         smali_files = []
@@ -376,16 +360,8 @@ class SmaliProcessor(FileProcessor):
             # Step 1: Replace slash-separated class paths (e.g. Lcom/whatsapp/... -> Lcom/new_pkg/...)
             content = self.pattern_slash.sub(self.new_slash, content)
             
-            # Step 2: Replace dot-separated package identifiers
+            # Step 2: Replace dot-separated package identifiers (classes, authorities, permissions)
             content = self.pattern_dot.sub(self.new_dot, content)
-            
-            # Step 3: Revert official Meta/WhatsApp internal modules back to official namespaces
-            if "Business" in self.config.current_folder_name:
-                content = self.official_dot_pattern.sub(r'\1whatsapp.w4b\2\3', content)
-                content = self.official_slash_pattern.sub(r'\1whatsapp/w4b\2\3', content)
-            else:
-                content = self.official_dot_pattern.sub(r'\1whatsapp\2\3', content)
-                content = self.official_slash_pattern.sub(r'\1whatsapp\2\3', content)
             
             with open(file_path, 'w', encoding='utf-8') as file:
                 file.write(content)
@@ -410,11 +386,6 @@ class XmlProcessor(FileProcessor):
         self.folder_pattern = re.compile(re.escape(self.config.current_folder_name))
         self.package_pattern = re.compile(re.escape(self.base_pkg))
         
-        # Whitelist protection pattern for class attributes (android:name="com.new_pkg.official_module...")
-        self.official_package_pattern = re.compile(
-            r'(android:name=")' + re.escape(self.new_pkg) + r'(\.)(' + OFFICIAL_MODULES + r')'
-        )
-        
     def get_files(self) -> List[str]:
         xml_files = []
         for root, _, files in os.walk(self.config.root_folder):
@@ -428,14 +399,15 @@ class XmlProcessor(FileProcessor):
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
                 content = file.read()
             
-            # Step 1: Replace all occurrences of base_pkg with new_pkg
+            # Step 1: Replace all occurrences of base_pkg with new_pkg (manifest, components, authorities, permissions)
             content = self.package_pattern.sub(self.new_pkg, content)
             
-            # Step 2: In AndroidManifest, restore official class android:name references to whatsapp namespace
-            if "Business" in self.config.current_folder_name:
-                content = self.official_package_pattern.sub(r'\1com.whatsapp.w4b\2\3', content)
-            else:
-                content = self.official_package_pattern.sub(r'\1com.whatsapp\2\3', content)
+            # Step 2: Preserve official external package queries in <queries>
+            content = re.sub(
+                r'(<package\s+android:name=")' + re.escape(self.new_pkg) + r'(\.w4b"/>)',
+                r'\1com.whatsapp\2',
+                content
+            )
             
             # Step 3: Remap Storage Folders (e.g. filepaths.xml)
             content = self.folder_pattern.sub(self.config.new_folder_name, content)
