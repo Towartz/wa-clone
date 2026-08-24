@@ -1,9 +1,11 @@
 # WhatsApp Clone Tool
 
-A Python utility for creating customized clones of WhatsApp and WhatsApp Business applications by modifying package names and resources in decompiled APK files.
+Universal zero-dependency Python utility for creating customized clones of WhatsApp, WhatsApp Lite, and WhatsApp Business applications by modifying package names, provider authorities, and resources in decompiled APK files.
 
-![Version](https://img.shields.io/badge/version-2.2.0-blue)
-![Python](https://img.shields.io/badge/python-3.x-green)
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Dependencies](https://img.shields.io/badge/dependencies-0%20(Pure%20Python)-brightgreen)
+![Python](https://img.shields.io/badge/python-3.8+-green)
+
 <div align="center">
   <a href="https://f-droid.org/id/packages/com.termux/">
     <img src="https://f-droid.org/repo/com.termux/en-US/icon_7jMZ7XD80oeucmGEaTwktIRZexLtGWvJfKdVD6Wu2SI=.png" width="120" height="120" alt="Termux">
@@ -20,51 +22,40 @@ A Python utility for creating customized clones of WhatsApp and WhatsApp Busines
 
 ## 📋 Overview
 
-![Preview Script](https://i.imgur.com/VxlnT73.png)
+This tool allows you to create modified clones of WhatsApp applications by replacing package names, Content Provider authorities, custom permissions, and resource references in `.smali` and `.xml` files from a decompiled APK. 
 
-This tool allows you to create modified clones of WhatsApp applications by replacing package names and resource references in `.smali` and `.xml` files from a decompiled APK. It supports both regular WhatsApp and WhatsApp Business applications.
+Supports regular WhatsApp (`com.whatsapp`), WhatsApp Lite (`com.whatsapp.litex`), WhatsApp Business (`com.whatsapp.w4b`), and pre-cloned custom WAMODs.
 
-## ✨ Features
+## ✨ Features (v3.0.0)
 
-- Creates customized clones of WhatsApp or WhatsApp Business
-- Supports automatic or custom package naming
-- Multi-threaded processing for faster execution
-- Interactive mode with rich text interface (when using the `rich` library)
-- Comprehensive logging and progress tracking
+- **Zero External Dependencies**: Runs out-of-the-box on clean Android Termux, Windows, Linux, or macOS using only Python standard library (no `pip install` required).
+- **Auto-Detect Base Package**: Automatically detects the package name directly from `AndroidManifest.xml`.
+- **Content Provider Remapping**: Remaps all 11+ modern Content Provider authorities (`accountswitching`, `mlkitinitprovider`, `orbitmessages`, `orbitsso`, etc.) to prevent `INSTALL_FAILED_CONFLICTING_PROVIDER`.
+- **Custom Permission Remapping**: Remaps all 9+ custom defined permissions to prevent `INSTALL_FAILED_DUPLICATE_PERMISSION`.
+- **Multi-DEX Smali Support**: Recursively traverses `smali`, `smali_classes2` through `smali_classes99`.
+- **Official Module Protection**: Whitelist protects Meta/WhatsApp submodules from bytecode namespace collisions.
+- **Built-in Pure Python TUI**: Decorative ASCII/Unicode box panels, structured tables, and dynamic real-time progress bars.
 
 ## 🔧 Prerequisites
 
-- Python 3.x or higher
-- Decompiled WhatsApp or WhatsApp Business APK (using APKTool or similar)
+- Python 3.8 or higher (Zero extra pip packages required!)
+- Decompiled WhatsApp APK (using APKTool or ApkToolM)
 
-## Termux
+### Termux Setup:
 ```bash
 pkg install python git -y
 ```
 
-## 📚 Required Libraries
-
-```bash
-pip install tqdm rich
-```
-
 ## 📥 Installation
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Towartz/wa-clone.git
-   ```
-
-2. Navigate to the directory:
-   ```bash
-   cd wa-clone
-   ```
+```bash
+git clone https://github.com/Towartz/wa-clone.git
+cd wa-clone
+```
 
 ## 🚀 Usage
 
 ### Step 1: Decompile WhatsApp APK
-
-Before using this tool, you need to decompile a WhatsApp APK file:
 
 #### Using APKTool (Command Line):
 ```bash
@@ -79,11 +70,11 @@ apktool d path/to/whatsapp.apk -o whatsapp_decompiled
 
 ### Step 2: Run the Cloning Tool
 
-#### Interactive Mode (Recommended for beginners):
+#### Interactive Mode (Recommended):
 ```bash
 python whatsapp_clone.py
 ```
-Follow the on-screen prompts to select options.
+Follow the on-screen prompts with auto-detected package settings.
 
 #### Command Line Mode:
 ```bash
@@ -93,70 +84,38 @@ python whatsapp_clone.py [folder_path] [options]
 ### Command Line Arguments
 
 | Argument | Description |
-|----------|-------------|
+|---|---|
 | `folder` | Path to the decompiled WhatsApp folder |
-| `--whatsapp-type` | Type of WhatsApp: `1` = WhatsApp, `2` = WhatsApp Business |
-| `--mode` | Operation mode: `1` = Auto (default package names), `2` = Custom |
-| `--package` | New package name without 'com' (Required with `--mode 2`) |
-| `--name` | New folder name (Required with `--mode 2`) |
-| `--workers` | Number of worker threads (Default: 4) |
+| `--whatsapp-type` | Type of WhatsApp: `1` = Standard, `2` = Business, `3` = Custom/Auto |
+| `--mode` | Operation mode: `1` = Auto, `2` = Custom Package, `3` = Custom ALL |
+| `--package` | New package name without 'com.' (e.g. `towartz.wa`) |
+| `--name` | New storage folder name (e.g. `TowartzWA`) |
+| `--search-pattern` | Custom base search pattern (Mode 3 only) |
+| `--workers` | Number of worker threads (Default: 8) |
 | `-h, --help` | Display help message |
 
 ### Examples
 
-#### Run interactively:
 ```bash
-python whatsapp_clone.py
+# Auto-detect base package and clone with custom name
+python whatsapp_clone.py ./whatsapp_decompiled --mode 2 --package mywa --name MyWA
+
+# Process WhatsApp Business
+python whatsapp_clone.py ./whatsapp_decompiled --whatsapp-type 2 --mode 1
+
+# Process with 16 parallel worker threads
+python whatsapp_clone.py ./whatsapp_decompiled --mode 2 --package mywa --name MyWA --workers 16
 ```
 
-#### Process WhatsApp with default settings:
-```bash
-python whatsapp_clone.py ./whatsapp_decompiled --whatsapp-type 1 --mode 1
-```
+### Step 3: Recompile & Sign
 
-#### Process WhatsApp with custom package name:
-```bash
-python whatsapp_clone.py ./whatsapp_decompiled --whatsapp-type 1 --mode 2 --package mywhatsapp --name MyWhatsApp
-```
-
-#### Process WhatsApp Business with 8 worker threads:
-```bash
-python whatsapp_clone.py ./whatsapp_decompiled --whatsapp-type 2 --mode 1 --workers 8
-```
-
-### Step 3: Recompile the Modified APK
-
-After running the tool, you need to recompile the modified code back into an APK:
-
-#### Using APKTool:
-```bash
-apktool b whatsapp_decompiled -o modified_whatsapp.apk
-```
-
-#### Using ApkToolM:
-1. Select the modified folder
-2. Choose "Build"
-3. Wait for the build process to complete
-
-### Step 4: Sign the APK
-
-The recompiled APK needs to be signed before it can be installed:
-
-#### Using APK Signer tools like APK Signer or ZipSigner
-
-## ⚠️ Important Notes
-
-- This tool is for educational purposes only
-- For Cloning WhatsApp Business (com.whatsapp.w4b) still have bug
-
-## 🔄 Workflow Summary
-
-1. Decompile WhatsApp/WhatsApp Business APK → Get decompiled folder
-2. Run WhatsApp Clone Tool → Get modified decompiled folder
-3. Recompile modified folder → Get unsigned APK
-4. Sign the APK → Get installable APK
+1. Recompile the modified folder:
+   ```bash
+   apktool b whatsapp_decompiled -o modified_whatsapp.apk
+   ```
+2. Sign the APK using `apksigner` or ApkToolM.
 
 ## 🤝 Credits
 
 - Original script ported from .bat and .ps1 scripts
-- Python version by YouTube@66XZD (デキ)
+- Python version by YouTube@66XZD (Deki)
