@@ -362,7 +362,8 @@ class SmaliProcessor(FileProcessor):
     
     def get_files(self) -> List[str]:
         smali_files = []
-        for root, _, files in os.walk(self.config.root_folder):
+        for root, dirs, files in os.walk(self.config.root_folder):
+            dirs[:] = [d for d in dirs if d not in ('build', '.cache', '.git', 'dist')]
             for f in files:
                 if f.endswith(".smali"):
                     smali_files.append(os.path.join(root, f))
@@ -410,14 +411,15 @@ class XmlProcessor(FileProcessor):
         self.folder_pattern = re.compile(re.escape(self.config.current_folder_name))
         self.package_pattern = re.compile(re.escape(self.base_pkg))
         
-        # Whitelist protection pattern for class attributes (android:name="com.new_pkg.official_module...")
-        self.official_package_pattern = re.compile(
-            r'(android:name=")' + re.escape(self.new_pkg) + r'(\.)(' + OFFICIAL_MODULES + r')'
+        # Universal XML whitelist pattern for tag names (<com.whatsapp.<mod>), attributes (="com.whatsapp.<mod>"), etc.
+        self.official_xml_pattern = re.compile(
+            r'([<"\'/])' + re.escape(self.new_pkg) + r'(\.)(' + OFFICIAL_MODULES + r')'
         )
         
     def get_files(self) -> List[str]:
         xml_files = []
-        for root, _, files in os.walk(self.config.root_folder):
+        for root, dirs, files in os.walk(self.config.root_folder):
+            dirs[:] = [d for d in dirs if d not in ('build', '.cache', '.git', 'dist')]
             for f in files:
                 if f.endswith(".xml"):
                     xml_files.append(os.path.join(root, f))
@@ -431,11 +433,11 @@ class XmlProcessor(FileProcessor):
             # Step 1: Replace all occurrences of base_pkg with new_pkg (manifest, components, authorities, permissions)
             content = self.package_pattern.sub(self.new_pkg, content)
             
-            # Step 2: In AndroidManifest, restore official class android:name references to whatsapp namespace
+            # Step 2: Universal XML whitelist reversion for tags (<com.whatsapp.<mod>), attributes, and target activities
             if "Business" in self.config.current_folder_name:
-                content = self.official_package_pattern.sub(r'\1com.whatsapp.w4b\2\3', content)
+                content = self.official_xml_pattern.sub(r'\1com.whatsapp.w4b\2\3', content)
             else:
-                content = self.official_package_pattern.sub(r'\1com.whatsapp\2\3', content)
+                content = self.official_xml_pattern.sub(r'\1com.whatsapp\2\3', content)
             
             # Step 3: Preserve official external package queries in <queries>
             content = re.sub(
