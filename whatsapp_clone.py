@@ -2,16 +2,18 @@
 """
 WhatsApp Clone Tool
 
-This script allows cloning WhatsApp or WhatsApp Business applications
-by modifying package names and resources in .smali and .xml files.
+This script allows cloning WhatsApp, WhatsApp Lite, WhatsApp Business,
+or custom WAMOD applications by modifying package names, content provider authorities,
+custom permissions, and resources in .smali and .xml files.
+
+Zero external dependencies (100% pure Python standard library).
 
 Usage:
     python whatsapp_clone.py [folder_path] [options]
     python whatsapp_clone.py -h/--help
 
-Author: Python by YouTube@66XZD (デキ)
-Note : Ported from .bat and .ps1 script (not my own)
-Version: 2.2.0
+Author: Python by YouTube@66XZD (Deki)
+Version: 3.0.0 (Zero Dependencies Edition)
 """
 
 import os
@@ -19,159 +21,286 @@ import sys
 import re
 import glob
 import time
-import logging
 import argparse
-from typing import Pattern, List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
 
-try:
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.text import Text
-    from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
-    from rich.table import Table
-    from rich.prompt import Prompt, Confirm
-    from rich.layout import Layout
-    from rich import box
-    RICH_AVAILABLE = True
-except ImportError:
-    RICH_AVAILABLE = False
+# UTF-8 Encoding Setup for Windows/Termux/Linux
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
-if RICH_AVAILABLE:
-    console = Console()
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-logger = logging.getLogger(__name__)
 
+class TerminalUI:
+    """Built-in pure Python Terminal UI with ANSI color styling and box formatters."""
+    
+    # ANSI Colors
+    RESET = "[0m"
+    BOLD = "[1m"
+    DIM = "[2m"
+    CYAN = "[96m"
+    GREEN = "[92m"
+    YELLOW = "[93m"
+    RED = "[91m"
+    MAGENTA = "[95m"
+    BLUE = "[94m"
+    WHITE = "[97m"
+    
+    @classmethod
+    def supports_color(cls) -> bool:
+        """Checks if the terminal environment supports ANSI color codes."""
+        if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+            return False
+        if os.name == "nt":
+            return os.environ.get("TERM") is not None or "WT_SESSION" in os.environ or (hasattr(sys, 'getwindowsversion') and sys.getwindowsversion().build >= 10586)
+        return True
+
+    @classmethod
+    def supports_unicode(cls) -> bool:
+        """Checks if stdout can encode Unicode box characters."""
+        try:
+            encoding = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
+            "╭─█✓".encode(encoding)
+            return True
+        except Exception:
+            return False
+
+    @classmethod
+    def colorize(cls, text: str, color_code: str) -> str:
+        if cls.supports_color():
+            return f"{color_code}{text}{cls.RESET}"
+        return text
+
+    @classmethod
+    def print_panel(cls, title: str, subtitle: str, lines: List[str], border_color: str = CYAN) -> None:
+        """Renders a structured decorative panel box."""
+        use_unicode = cls.supports_unicode()
+        tl = "╭" if use_unicode else "+"
+        tr = "╮" if use_unicode else "+"
+        bl = "╰" if use_unicode else "+"
+        br = "╯" if use_unicode else "+"
+        h = "─" if use_unicode else "-"
+        v = "│" if use_unicode else "|"
+
+        clean_lines = [re.sub(r'\033\[[0-9;]*m', '', line) for line in lines]
+        max_len = max([len(line) for line in clean_lines] + [len(title) + 4, len(subtitle) + 4, 50])
+        box_width = max_len + 4
+
+        top_border = f"{tl}{h} {cls.colorize(title, cls.BOLD + border_color)} " + h * (box_width - len(title) - 5) + tr
+        bottom_border = bl + h * (box_width - len(subtitle) - 5) + f" {cls.colorize(subtitle, cls.DIM + border_color)} {h}{br}"
+
+        print(top_border)
+        for line in lines:
+            raw_len = len(re.sub(r'\033\[[0-9;]*m', '', line))
+            padding = " " * (box_width - raw_len - 2)
+            print(f"{v} {line}{padding}{v}")
+        print(bottom_border)
+
+    @classmethod
+    def print_table(cls, title: str, headers: List[str], rows: List[List[str]]) -> None:
+        """Renders an ASCII / Unicode formatted table."""
+        use_unicode = cls.supports_unicode()
+        tl = "┌" if use_unicode else "+"
+        tr = "┐" if use_unicode else "+"
+        bl = "└" if use_unicode else "+"
+        br = "┘" if use_unicode else "+"
+        cross = "┼" if use_unicode else "+"
+        top_t = "┬" if use_unicode else "-"
+        bot_t = "┴" if use_unicode else "-"
+        left_t = "├" if use_unicode else "+"
+        right_t = "┤" if use_unicode else "+"
+        h = "─" if use_unicode else "-"
+        v = "│" if use_unicode else "|"
+
+        num_cols = len(headers)
+        col_widths = [len(h_name) for h_name in headers]
+        
+        for row in rows:
+            for i in range(num_cols):
+                clean_cell = re.sub(r'\033\[[0-9;]*m', '', str(row[i]))
+                if len(clean_cell) > col_widths[i]:
+                    col_widths[i] = len(clean_cell)
+                    
+        total_width = sum(col_widths) + (3 * num_cols) + 1
+        
+        # Header Box
+        print(f"{tl}{h} {cls.colorize(title, cls.BOLD + cls.CYAN)} " + h * (total_width - len(title) - 5) + tr)
+        
+        # Column Names
+        header_line = f"{v} " + f" {v} ".join([cls.colorize(headers[i].ljust(col_widths[i]), cls.BOLD + cls.WHITE) for i in range(num_cols)]) + f" {v}"
+        print(header_line)
+        
+        sep_line = left_t + cross.join([h * (w + 2) for w in col_widths]) + right_t
+        print(sep_line)
+        
+        # Rows
+        for row in rows:
+            row_line = f"{v} "
+            for i in range(num_cols):
+                raw_cell = str(row[i])
+                clean_len = len(re.sub(r'\033\[[0-9;]*m', '', raw_cell))
+                pad = " " * (col_widths[i] - clean_len)
+                row_line += f"{raw_cell}{pad} {v} "
+            print(row_line[:-1])
+            
+        # Bottom
+        print(bl + bot_t.join([h * (w + 2) for w in col_widths]) + br)
+
+
+def render_progress_bar(task_name: str, current: int, total: int, start_time: float, bar_width: int = 25) -> None:
+    """Renders a dynamic real-time progress bar with ETA and rate."""
+    if total <= 0:
+        return
+    use_unicode = TerminalUI.supports_unicode()
+    fill_char = "█" if use_unicode else "#"
+    empty_char = "░" if use_unicode else "-"
+
+    percent = (current / total) * 100.0
+    filled = int(bar_width * current // total)
+    bar = fill_char * filled + empty_char * (bar_width - filled)
+    
+    elapsed = time.time() - start_time
+    rate = current / elapsed if elapsed > 0 else 0
+    eta = (total - current) / rate if rate > 0 else 0
+    
+    elapsed_str = time.strftime("%M:%S", time.gmtime(elapsed))
+    eta_str = time.strftime("%M:%S", time.gmtime(eta))
+    
+    msg = f"\r  {TerminalUI.colorize(task_name, TerminalUI.CYAN)} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] {percent:5.1f}% ({current}/{total}) [{elapsed_str}<{eta_str}, {rate:.1f}it/s]"
+    sys.stdout.write(msg)
+    sys.stdout.flush()
+    if current >= total:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
+# Whitelist of official Meta / WhatsApp submodules whose class bytecode namespaces should remain un-renamed
 OFFICIAL_MODULES = (
-    "aborthooks|adscreation|anr|audioRecording|breakpad|calling|fieldstats|filter|"
-    "infra|jid|media|messagetranslation|nativelibloader|protocol|pytorch|stickers|"
-    "superpack|unity|util|voipcalling|wamsys|executorch|gwpasan|"
-    "voicetranscription|AppShell|GifHelper|Mp4Ops|NativeMediaHandler|SmbAppShell|"
-    "SqliteShell|StickyHeadersRecyclerView|VideoFrameConverter|ohai|WaOhaiClient|productinfra|music|api|MusicApi" # add Fix Music status
+    "aborthooks|accesslibraryprovider|accountswitching|adscreation|anr|audioRecording|"
+    "backup|bloks|breakpad|calling|companiondevice|crossapp|executorch|fieldstats|filter|"
+    "foa|garmin|gwpasan|infra|instrumentation|jid|litex|media|messagedrafts|messagetranslation|"
+    "mlkit|music|MusicApi|NativeMediaHandler|nativelibloader|ohai|orbit|pixel|productinfra|"
+    "protocol|pytorch|stickers|superpack|unity|util|voicetranscription|voipcalling|wfl|"
+    "wamsys|WaOhaiClient|waquickpromotionclient|AppShell|GifHelper|Mp4Ops|SmbAppShell|"
+    "SqliteShell|StickyHeadersRecyclerView|VideoFrameConverter"
 )
+
 
 def show_help():
     help_text = """
-WhatsApp Clone Tool Help Guide
-==============================
+WhatsApp Clone Tool Help Guide (v3.0.0 - Zero Deps)
+==================================================
 
 DESCRIPTION:
-    This tool allows you to create modified clones of WhatsApp or WhatsApp Business
-    applications by modifying package names and resources in decompiled APK files.
+    This tool allows you to create modified clones of WhatsApp, WhatsApp Lite,
+    WhatsApp Business, or custom WAMODs by modifying package names, provider
+    authorities, custom permissions, and resources in decompiled APK directories.
 
 USAGE:
     python whatsapp_clone.py [folder_path] [options]
     python whatsapp_clone.py -h/--help
 
 ARGUMENTS:
-    folder                The root folder of the decompiled WhatsApp code
+    folder                The root folder of the decompiled WhatsApp APK
                           If not provided, you'll be prompted to enter it
 
 OPTIONS:
     --whatsapp-type INT   Specify WhatsApp type:
-                          1 = WhatsApp
-                          2 = WhatsApp Business
+                          1 = Standard WhatsApp (com.whatsapp / com.whatsapp.litex)
+                          2 = WhatsApp Business (com.whatsapp.w4b)
+                          3 = Custom Base / Auto-Detect from Manifest
 
     --mode INT            Select operation mode:
                           1 = Auto (uses default package names)
-                          2 = Custom (lets you specify custom package names)
-                          3 = Custom ALL (fully customize including search patterns)
+                          2 = Custom Base to Clone (specify custom package name)
+                          3 = Custom ALL (Clone of Cloned Base with custom search pattern)
 
-    --package STRING      New package name without 'com'
+    --package STRING      New package name without 'com.' prefix (e.g. 'towartz.wa')
                           (Required with --mode 2 or 3)
 
-    --name STRING         New folder name
+    --name STRING         New storage folder name (e.g. 'TowartzWA')
                           (Required with --mode 2 or 3)
                           
-    --search-pattern STRING  Custom search pattern for package
+    --search-pattern STRING Custom base search pattern (e.g. 'com.whatsapp' or 'com.whatsapp.litex')
                           (Only with --mode 3)
 
     --workers INT         Number of worker threads for parallel processing
-                          (Default: 4)
+                          (Default: 8)
 
     -h, --help            Display this help message
 
 EXAMPLES:
-    # Process with fully custom settings including search pattern
-    python whatsapp_clone.py /path/to/decompiled --whatsapp-type 1 --mode 3 --package mywhatsapp --name MyWhatsApp --search-pattern "com.whatsapp"
+    # Auto-detect base and clone with custom package name
+    python whatsapp_clone.py ./decompiled_apk --mode 2 --package mywa --name MyWA
 
-    # Run interactively (will prompt for all options)
+    # Process WhatsApp Business
+    python whatsapp_clone.py ./decompiled_w4b --whatsapp-type 2 --mode 1
+
+    # Run interactively (will guide you step-by-step with auto-detection)
     python whatsapp_clone.py
 
-    # Process WhatsApp in the current directory with default settings
-    python whatsapp_clone.py . --whatsapp-type 1 --mode 1
-
-    # Process WhatsApp with custom package name
-    python whatsapp_clone.py /path/to/decompiled --whatsapp-type 1 --mode 2 --package mywhatsapp --name MyWhatsApp
-
-    # Process WhatsApp Business with 8 worker threads
-    python whatsapp_clone.py /path/to/decompiled --whatsapp-type 2 --mode 1 --workers 8
-
 NOTES:
-    - The tool requires a decompiled WhatsApp APK. You can use a tool like apktool to decompile the APK.
-    - The tool modifies .smali and .xml files to change package names and references.
-    - After running this tool, you'll need to recompile the APK using apktool.
-    - Make sure to sign the APK after recompilation.
-
-AUTHOR:
-    YouTube@66XZD (デキ)
-    Note: Ported from .bat and .ps1 script (not my own)
+    - Automatically remaps 11+ Content Provider authorities to prevent INSTALL_FAILED_CONFLICTING_PROVIDER.
+    - Automatically remaps custom defined permissions to prevent INSTALL_FAILED_DUPLICATE_PERMISSION.
+    - Handles all multi-DEX smali folders (smali, smali_classes2 .. smali_classes99).
 """
-    if RICH_AVAILABLE:
-        help_panel = Panel(
-            help_text, 
-            title="[bold cyan]WhatsApp Clone Tool Help[/bold cyan]",
-            border_style="blue",
-            expand=False
-        )
-        console.print(help_panel)
-    else:
-        print(help_text)
+    print(help_text)
     sys.exit(0)
+
 
 class WhatsAppCloneConfig:
     
     def __init__(self):
         self.root_folder: str = ""
-        self.current_folder_name: str = ""
+        self.detected_base_pkg: str = "com.whatsapp"
+        self.current_folder_name: str = "WhatsApp"
         self.new_package_name: str = ""
         self.new_folder_name: str = ""
         self.new_package_name_path: str = ""
         self.custom_search_pattern: str = ""
-        self.max_workers: int = 8  
+        self.max_workers: int = 8
         
-    def get_config_table(self) -> Table:
-        table = Table(show_header=False, box=box.ROUNDED)
-        table.add_column("Parameter", style="cyan")
-        table.add_column("Value", style="green")
-        table.add_row("Root folder", self.root_folder)
-        table.add_row("Current folder name", self.current_folder_name)
-        table.add_row("New package name", self.new_package_name)
-        table.add_row("New folder name", self.new_folder_name)
-        table.add_row("Package path format", self.new_package_name_path)
+    def detect_from_manifest(self) -> Tuple[str, str]:
+        """Detects the base package and app type from AndroidManifest.xml if available."""
+        manifest_path = os.path.join(self.root_folder, "AndroidManifest.xml")
+        if os.path.isfile(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                pkg_match = re.search(r'package="([^"]+)"', content)
+                if pkg_match:
+                    self.detected_base_pkg = pkg_match.group(1)
+                    if "w4b" in self.detected_base_pkg.lower() or "business" in self.detected_base_pkg.lower():
+                        self.current_folder_name = "WhatsApp Business"
+                    else:
+                        self.current_folder_name = "WhatsApp"
+                    return self.detected_base_pkg, self.current_folder_name
+            except Exception:
+                pass
+        return self.detected_base_pkg, self.current_folder_name
+
+    def display_config(self) -> None:
+        headers = ["Parameter", "Configured Value"]
+        rows = [
+            ["Root folder", TerminalUI.colorize(self.root_folder, TerminalUI.GREEN)],
+            ["Detected base package", TerminalUI.colorize(self.detected_base_pkg, TerminalUI.YELLOW)],
+            ["Current folder name", self.current_folder_name],
+            ["New package name", TerminalUI.colorize(f"com.{self.new_package_name}", TerminalUI.GREEN)],
+            ["New folder name", self.new_folder_name],
+            ["Package path format", f"com/{self.new_package_name_path}"],
+            ["Worker threads", str(self.max_workers)],
+        ]
         if self.custom_search_pattern:
-            table.add_row("Custom search pattern", self.custom_search_pattern)
-        return table
-        
-    def __str__(self) -> str:
-        if RICH_AVAILABLE:
-            with console.capture() as capture:
-                console.print(self.get_config_table())
-            return capture.get()
-        else:
-            return (
-                f"Root folder: {self.root_folder}\n"
-                f"Current folder name: {self.current_folder_name}\n"
-                f"New package name: {self.new_package_name}\n"
-                f"New folder name: {self.new_folder_name}\n"
-                f"Package path format: {self.new_package_name_path}"
-            )
+            rows.append(["Custom search pattern", self.custom_search_pattern])
+        TerminalUI.print_table("Configuration Parameters", headers, rows)
 
 
 class FileProcessor:
@@ -188,42 +317,20 @@ class FileProcessor:
     def process_all_files(self) -> Tuple[int, int]:
         files = self.get_files()
         if not files:
-            if RICH_AVAILABLE:
-                console.print(f"No [blue]{self.__class__.__name__}[/blue] files found to process.")
-            else:
-                logger.info(f"No {self.__class__.__name__} files found to process.")
+            print(TerminalUI.colorize(f"  [-] No {self.__class__.__name__} files found to process.", TerminalUI.DIM))
             return 0, 0
         
         total_files = len(files)
         success_count = 0
+        start_time = time.time()
         
-        if RICH_AVAILABLE:
-            with Progress(
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(complete_style="green"),
-                TaskProgressColumn(),
-                TimeRemainingColumn(),
-                console=console
-            ) as progress:
-                task = progress.add_task(f"Processing {self.__class__.__name__} files", total=total_files)
-                
-                with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
-                    results = []
-                    for result in executor.map(self.process_file, files):
-                        results.append(result)
-                        progress.update(task, advance=1)
+        with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
+            for idx, result in enumerate(executor.map(self.process_file, files), 1):
+                if result:
+                    success_count += 1
+                if idx % 10 == 0 or idx == total_files:
+                    render_progress_bar(self.__class__.__name__, idx, total_files, start_time)
                     
-                success_count = sum(1 for result in results if result)
-        else:
-            with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
-                results = list(tqdm(
-                    executor.map(self.process_file, files),
-                    total=total_files,
-                    desc=f"Processing {self.__class__.__name__} files"
-                ))
-                
-            success_count = sum(1 for result in results if result)
-            
         return total_files, success_count
 
 
@@ -232,88 +339,62 @@ class SmaliProcessor(FileProcessor):
     def __init__(self, config: WhatsAppCloneConfig):
         super().__init__(config)
         
-        # Default patterns for regular WhatsApp
-        self.package_pattern1 = re.compile(r'com(/)whatsapp')
-        self.package_pattern2 = re.compile(r'com(\.)whatsapp')
-        
-        # Different patterns for WhatsApp Business to properly handle both
-        # WhatsApp and WhatsApp Business patterns
         if hasattr(self.config, 'custom_search_pattern') and self.config.custom_search_pattern:
-            # Create patterns from the custom search pattern
-            custom_pattern = re.escape(self.config.custom_search_pattern)
-            # Replace dots with regex to match either dots or slashes
-            custom_pattern_slash = custom_pattern.replace('\\.', '(/)')
-            custom_pattern_dot = custom_pattern.replace('\\.', '(\\.)')
-            
-            self.package_pattern1 = re.compile(custom_pattern_slash)
-            self.package_pattern2 = re.compile(custom_pattern_dot)
+            base_dot = self.config.custom_search_pattern
         else:
-            # Default patterns for regular WhatsApp
-            self.package_pattern1 = re.compile(r'com(/)whatsapp')
-            self.package_pattern2 = re.compile(r'com(\.)whatsapp')
-            
-            # Different patterns for WhatsApp Business to properly handle both
-            # WhatsApp and WhatsApp Business patterns
-            if "Business" in self.config.current_folder_name:
-                self.package_pattern1 = re.compile(r'com(/)whatsapp(/w4b)?')
-                self.package_pattern2 = re.compile(r'com(\.)whatsapp(\.w4b)?')
-        
-        self.official_package_pattern = re.compile(
+            base_dot = self.config.detected_base_pkg
+
+        base_slash = base_dot.replace('.', '/')
+        new_dot = f"com.{self.config.new_package_name}"
+        new_slash = f"com/{self.config.new_package_name_path}"
+
+        self.pattern_dot = re.compile(re.escape(base_dot))
+        self.pattern_slash = re.compile(re.escape(base_slash))
+        self.new_dot = new_dot
+        self.new_slash = new_slash
+
+        self.official_dot_pattern = re.compile(
             r'(\.)' + re.escape(self.config.new_package_name) + r'(\.)(' + OFFICIAL_MODULES + r')'
         )
-        self.official_packageP_pattern = re.compile(
+        self.official_slash_pattern = re.compile(
             r'(\.|/)' + re.escape(self.config.new_package_name_path) + r'(\.|/)(' + OFFICIAL_MODULES + r')'
         )
     
     def get_files(self) -> List[str]:
-        return glob.glob(os.path.join(self.config.root_folder, "**", "*.smali"), recursive=True)
+        smali_files = []
+        for root, _, files in os.walk(self.config.root_folder):
+            for f in files:
+                if f.endswith(".smali"):
+                    smali_files.append(os.path.join(root, f))
+        return smali_files
         
     def process_file(self, file_path: str) -> bool:
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
                 content = file.read()
             
-            # Handle replacements differently for WhatsApp Business
-            if "Business" in self.config.current_folder_name:
-                # Preserve WhatsApp module references but replace WhatsApp Business references
-                # First pass: handle explicit w4b paths
-                explicit_w4b_pattern1 = re.compile(r'com(/)whatsapp(/w4b)')
-                explicit_w4b_pattern2 = re.compile(r'com(\.)whatsapp(\.w4b)')
-                
-                content = explicit_w4b_pattern1.sub(f'com\\1{self.config.new_package_name_path}', content)
-                content = explicit_w4b_pattern2.sub(f'com\\1{self.config.new_package_name}', content)
-                
-                # Second pass: handle core WhatsApp paths that aren't w4b
-                # but make sure not to replace WhatsApp paths that were already handled
-                core_wa_pattern1 = re.compile(r'com(/)whatsapp(?!/w4b)')
-                core_wa_pattern2 = re.compile(r'com(\.)whatsapp(?!\.w4b)')
-                
-                content = core_wa_pattern1.sub(f'com\\1whatsapp', content)
-                content = core_wa_pattern2.sub(f'com\\1whatsapp', content)
-            else:
-                # For regular WhatsApp, just replace all references
-                content = self.package_pattern1.sub(f'com\\1{self.config.new_package_name_path}', content)
-                content = self.package_pattern2.sub(f'com\\1{self.config.new_package_name}', content)
+            # Step 1: Replace slash-separated class paths (e.g. Lcom/whatsapp/... -> Lcom/new_pkg/...)
+            content = self.pattern_slash.sub(self.new_slash, content)
             
-            # Handle official modules in both cases
+            # Step 2: Replace dot-separated package identifiers
+            content = self.pattern_dot.sub(self.new_dot, content)
+            
+            # Step 3: Revert official Meta/WhatsApp internal modules back to official namespaces
             if "Business" in self.config.current_folder_name:
-                content = self.official_package_pattern.sub(r'\1whatsapp.w4b\2\3', content)
-                content = self.official_packageP_pattern.sub(r'\1whatsapp/w4b\2\3', content)
+                content = self.official_dot_pattern.sub(r'\1whatsapp.w4b\2\3', content)
+                content = self.official_slash_pattern.sub(r'\1whatsapp/w4b\2\3', content)
             else:
-                content = self.official_package_pattern.sub(r'\1whatsapp\2\3', content)
-                content = self.official_packageP_pattern.sub(r'\1whatsapp\2\3', content)
+                content = self.official_dot_pattern.sub(r'\1whatsapp\2\3', content)
+                content = self.official_slash_pattern.sub(r'\1whatsapp\2\3', content)
             
             with open(file_path, 'w', encoding='utf-8') as file:
                 file.write(content)
             
             return True
                 
-        except Exception as e:
-            if RICH_AVAILABLE:
-                console.print(f"[bold red]Error processing {file_path}: {e}[/bold red]")
-            else:
-                logger.error(f"Error processing {file_path}: {e}")
+        except Exception:
             return False
+
 
 class XmlProcessor(FileProcessor):
     
@@ -321,54 +402,50 @@ class XmlProcessor(FileProcessor):
         super().__init__(config)
         
         if hasattr(self.config, 'custom_search_pattern') and self.config.custom_search_pattern:
-            # Use custom search pattern
-            self.package_pattern = re.compile(re.escape(self.config.custom_search_pattern))
-            self.sticker_pattern = re.compile(r'android:name="' + re.escape(self.config.custom_search_pattern) + r'\.sticker\.READ"')
+            self.base_pkg = self.config.custom_search_pattern
         else:
-            if "Business" in self.config.current_folder_name:
-                self.package_pattern = re.compile(r'com\.whatsapp(\.w4b)?')
-                self.sticker_pattern = re.compile(r'android:name="com\.whatsapp(\.w4b)?\.sticker\.READ"')
-            else:
-                self.package_pattern = re.compile(r'com\.whatsapp')
-                self.sticker_pattern = re.compile(r'android:name="com\.whatsapp\.sticker\.READ"')
-        
-        # Add the missing patterns
+            self.base_pkg = self.config.detected_base_pkg
+
+        self.new_pkg = f"com.{self.config.new_package_name}"
         self.folder_pattern = re.compile(re.escape(self.config.current_folder_name))
+        self.package_pattern = re.compile(re.escape(self.base_pkg))
         
-        # Add the official_package_pattern similar to SmaliProcessor
+        # Whitelist protection pattern for class attributes (android:name="com.new_pkg.official_module...")
         self.official_package_pattern = re.compile(
-            r'(\.)' + re.escape(self.config.new_package_name) + r'(\.)(' + OFFICIAL_MODULES + r')'
+            r'(android:name=")' + re.escape(self.new_pkg) + r'(\.)(' + OFFICIAL_MODULES + r')'
         )
         
     def get_files(self) -> List[str]:
-        return glob.glob(os.path.join(self.config.root_folder, "**", "*.xml"), recursive=True)
+        xml_files = []
+        for root, _, files in os.walk(self.config.root_folder):
+            for f in files:
+                if f.endswith(".xml"):
+                    xml_files.append(os.path.join(root, f))
+        return xml_files
         
     def process_file(self, file_path: str) -> bool:
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
                 content = file.read()
             
-            content = self.package_pattern.sub(f'com.{self.config.new_package_name}', content)
-            content = self.sticker_pattern.sub(
-                f'android:name="com.{self.config.new_package_name}.sticker.READ"', content
-            )
-            content = self.folder_pattern.sub(self.config.new_folder_name, content)
+            # Step 1: Replace all occurrences of base_pkg with new_pkg
+            content = self.package_pattern.sub(self.new_pkg, content)
             
+            # Step 2: In AndroidManifest, restore official class android:name references to whatsapp namespace
             if "Business" in self.config.current_folder_name:
-                content = self.official_package_pattern.sub(r'\1whatsapp.w4b\2\3', content)
+                content = self.official_package_pattern.sub(r'\1com.whatsapp.w4b\2\3', content)
             else:
-                content = self.official_package_pattern.sub(r'\1whatsapp\2\3', content)
+                content = self.official_package_pattern.sub(r'\1com.whatsapp\2\3', content)
+            
+            # Step 3: Remap Storage Folders (e.g. filepaths.xml)
+            content = self.folder_pattern.sub(self.config.new_folder_name, content)
             
             with open(file_path, 'w', encoding='utf-8') as file:
                 file.write(content)
                 
             return True
                 
-        except Exception as e:
-            if RICH_AVAILABLE:
-                console.print(f"[bold red]Error processing {file_path}: {e}[/bold red]")
-            else:
-                logger.error(f"Error processing {file_path}: {e}")
+        except Exception:
             return False
 
 
@@ -378,44 +455,37 @@ class WhatsAppCloner:
         self.config = WhatsAppCloneConfig()
         
     def display_intro(self):
-        if RICH_AVAILABLE:
-            title = Text("WhatsApp Clone Tool", style="bold cyan")
-            subtitle = Text("Script Version : v2.2.0", style="italic green")
-            
-            description = Text("\nThis tool allows you to create modified clones of WhatsApp by customizing package names and resources xml.")
-            author = Text("\nAuthor: YouTube@66XZD (デキ)", style="blue")
-            note = Text("Note: Ported from .bat and .ps1 script (not my own)", style="yellow")
-            
-            console.print(Panel(
-                Text.assemble(title, "\n", subtitle, description, "\n", author, "\n", note),
-                border_style="cyan",
-                title="[bold white]WhatsApp Clone Tool[/bold white]",
-                subtitle="[white]v2.2.0[/white]"
-            ))
-        else:
-            print("\n=== WhatsApp Clone Tool - v2.2.0 ===")
-            print("\nThis tool allows you to create modified clones of WhatsApp by customizing package names and resources xml.")
-            print("\nAuthor: YouTube@66XZD (デキ)")
-            print("Note: Ported from .bat and .ps1 script (not my own)")
-            print("=" * 60 + "\n")
+        title = "WhatsApp Clone Tool"
+        subtitle = "v3.0.0 (Zero Dependencies)"
+        lines = [
+            TerminalUI.colorize("Universal APK clone utility for WhatsApp, WhatsApp Lite, Business & WAMODs.", TerminalUI.WHITE),
+            "",
+            TerminalUI.colorize("[+] Auto-detects base package from AndroidManifest.xml", TerminalUI.CYAN),
+            TerminalUI.colorize("[+] Remaps all 11+ Content Provider authorities (Prevents Conflicting Provider)", TerminalUI.CYAN),
+            TerminalUI.colorize("[+] Remaps all custom permissions & multi-DEX smali folders", TerminalUI.CYAN),
+            "",
+            TerminalUI.colorize("Author: YouTube@66XZD (Deki)", TerminalUI.DIM)
+        ]
+        TerminalUI.print_panel(title, subtitle, lines, TerminalUI.CYAN)
+        print()
     
-    def parse_arguments(self) -> None:
-        parser = argparse.ArgumentParser(description="WhatsApp Clone Tool", add_help=False)
+    def parse_arguments(self) -> bool:
+        parser = argparse.ArgumentParser(description="WhatsApp Clone Tool v3.0.0", add_help=False)
         parser.add_argument("folder", nargs="?", help="The root folder of the decompiled WhatsApp code")
         parser.add_argument(
             "--whatsapp-type", type=int, choices=[1, 2, 3], 
-            help="WhatsApp type: 1 for WhatsApp, 2 for WhatsApp Business"
+            help="WhatsApp type: 1 for WhatsApp, 2 for WhatsApp Business, 3 for Custom/Auto"
         )
         parser.add_argument(
             "--mode", type=int, choices=[1, 2, 3],
-            help="Mode: 1 for Auto, 2 for Custom, 3 for Custom ALL"
+            help="Mode: 1 for Auto, 2 for Custom Base, 3 for Custom ALL"
         )
-        parser.add_argument("--package", help="New package name without 'com'")
-        parser.add_argument("--name", help="New folder name")
-        parser.add_argument("--search-pattern", help="Custom search pattern for package (Mode 3 only)")
+        parser.add_argument("--package", help="New package name without 'com.' prefix (e.g. 'mywa')")
+        parser.add_argument("--name", help="New storage folder name (e.g. 'MyWhatsApp')")
+        parser.add_argument("--search-pattern", help="Custom search pattern for base package (Mode 3 only)")
         parser.add_argument(
-            "--workers", type=int, default=4,
-            help="Number of worker threads for parallel processing"
+            "--workers", type=int, default=8,
+            help="Number of worker threads for parallel processing (Default: 8)"
         )
         parser.add_argument("-h", "--help", action="store_true", help="Show help message and exit")
         
@@ -425,11 +495,12 @@ class WhatsAppCloner:
             show_help()
         
         if args.folder:
-            self.config.root_folder = args.folder
+            self.config.root_folder = os.path.abspath(args.folder)
+            self.config.detect_from_manifest()
         
-        self.config.max_workers = args.workers or 4
+        self.config.max_workers = args.workers or 8
         
-        if args.folder and args.whatsapp_type and args.mode:
+        if args.folder and args.mode:
             self.setup_from_args(args)
             return True
         else:
@@ -437,32 +508,31 @@ class WhatsAppCloner:
     
     def setup_from_args(self, args) -> None:
         if args.whatsapp_type == 1:
+            self.config.detected_base_pkg = "com.whatsapp"
             self.config.current_folder_name = "WhatsApp"
-            default_pkg = "whatsapp"
-        else:
+            default_pkg = "universe.messenger"
+        elif args.whatsapp_type == 2:
+            self.config.detected_base_pkg = "com.whatsapp.w4b"
             self.config.current_folder_name = "WhatsApp Business"
-            default_pkg = "whatsapp.w4b"
+            default_pkg = "universe.messenger"
+        else:
+            self.config.detect_from_manifest()
+            default_pkg = "universe.messenger"
             
         if args.mode == 1:
             self.config.new_package_name = default_pkg
-            self.config.new_folder_name = "WhatsApp" if args.whatsapp_type == 1 else "WhatsApp Business"
+            self.config.new_folder_name = self.config.current_folder_name
         elif args.mode == 2:
             if not args.package or not args.name:
-                if RICH_AVAILABLE:
-                    console.print("[bold red]ERROR: --package and --name are required with --mode 2[/bold red]")
-                else:
-                    logger.error("--package and --name are required with --mode 2")
+                print(TerminalUI.colorize("ERROR: --package and --name are required with --mode 2", TerminalUI.RED))
                 sys.exit(1)
-            self.config.new_package_name = args.package
+            self.config.new_package_name = args.package.removeprefix("com.")
             self.config.new_folder_name = args.name
         elif args.mode == 3:
             if not args.package or not args.name or not args.search_pattern:
-                if RICH_AVAILABLE:
-                    console.print("[bold red]ERROR: --package, --name, and --search-pattern are required with --mode 3[/bold red]")
-                else:
-                    logger.error("--package, --name, and --search-pattern are required with --mode 3")
+                print(TerminalUI.colorize("ERROR: --package, --name, and --search-pattern are required with --mode 3", TerminalUI.RED))
                 sys.exit(1)
-            self.config.new_package_name = args.package
+            self.config.new_package_name = args.package.removeprefix("com.")
             self.config.new_folder_name = args.name
             self.config.custom_search_pattern = args.search_pattern
             
@@ -470,200 +540,96 @@ class WhatsAppCloner:
     
     def setup_interactively(self) -> None:
         if not self.config.root_folder:
-            if RICH_AVAILABLE:
-                self.config.root_folder = Prompt.ask(
-                    "[bold cyan]Enter the root folder path[/bold cyan]",
-                    default=os.getcwd()
-                )
-            else:
-                self.config.root_folder = input("Enter the root folder path (or press Enter for current directory): ") or os.getcwd()
+            prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK", TerminalUI.CYAN)
+            self.config.root_folder = input(f"{prompt_str} (or Enter for current dir): ").strip() or os.getcwd()
         
-        if RICH_AVAILABLE:
-            console.print("\n[bold magenta]Select which WhatsApp you want to clone:[/bold magenta]")
-            console.print("[blue]1. [green]WhatsApp[/green][/blue]")
-            console.print("[blue]2. [green]WhatsApp Business[/green][/blue]")
-            
-            selection = Prompt.ask(
-                "[yellow]Enter the number[/yellow]",
-                choices=["1", "2"],
-                default="1"
-            )
-        else:
-            print("\nSelect which WhatsApp you want to clone:")
-            print("1. WhatsApp")
-            print("2. WhatsApp Business")
-            
-            while True:
-                selection = input("\nEnter the number (1 or 2): ")
-                if selection in ["1", "2"]:
-                    break
-                else:
-                    print("Invalid selection. Please try again.")
+        self.config.root_folder = os.path.abspath(self.config.root_folder)
+        detected_pkg, folder_name = self.config.detect_from_manifest()
         
-        if selection == "1":
+        check_icon = "[+]" if TerminalUI.supports_unicode() else "[+]"
+        print(f"\n{TerminalUI.colorize(check_icon, TerminalUI.GREEN)} Detected Base Package: {TerminalUI.colorize(detected_pkg, TerminalUI.BOLD + TerminalUI.CYAN)} ({folder_name})")
+        print("\nSelect WhatsApp Type / Base:")
+        print(f"  {TerminalUI.colorize('1.', TerminalUI.YELLOW)} Auto-detected ({detected_pkg})")
+        print(f"  {TerminalUI.colorize('2.', TerminalUI.YELLOW)} Standard WhatsApp (com.whatsapp)")
+        print(f"  {TerminalUI.colorize('3.', TerminalUI.YELLOW)} WhatsApp Business (com.whatsapp.w4b)")
+        
+        selection = input("\nEnter number (1, 2, or 3) [default: 1]: ").strip() or "1"
+        if selection == "2":
+            self.config.detected_base_pkg = "com.whatsapp"
             self.config.current_folder_name = "WhatsApp"
-            default_pkg = "universe.messenger"
-        else:
-            self.config.current_folder_name = "WhatsApp Business"
-            default_pkg = "universe.messenger"
+        elif selection == "3":
+            self.config.detected_base_pkg = "com.whatsapp.w4b"
+            self.config.current_folder_name = "WhatsApp Business"
+            
+        print("\nSelect Operation Mode:")
+        print(f"  {TerminalUI.colorize('1.', TerminalUI.YELLOW)} Auto (com.universe.messenger)")
+        print(f"  {TerminalUI.colorize('2.', TerminalUI.YELLOW)} Custom Package (Clone original base to new name)")
+        print(f"  {TerminalUI.colorize('3.', TerminalUI.YELLOW)} Custom ALL (Clone of Cloned base with custom search)")
         
-        if RICH_AVAILABLE:
-            console.print("\n[bold magenta]Mode?[/bold magenta]")
-            console.print("[blue]1. [green]Auto - Automatically uses the default configuration.[/green][/blue]")
-            console.print("[blue]2. [green]Custom WhatsApp Base - Clone the WhatsApp original base to Clone.[/green][/blue]")
-            console.print("[blue]3. [green]Custom ALL (Clone base of Cloned) - Fully customizable, Can Clone of Cloned Base[/green][/blue]")
-            
-            mode = Prompt.ask(
-                "[yellow]Type number[/yellow]",
-                choices=["1", "2", "3"],
-                default="1"
-            )
-        else:
-            print("\nSelect Mode:")
-            print("1. Auto - Automatically uses the default configuration.")
-            print("2. Custom WhatsApp Base - Clone the WhatsApp base to Clone.")
-            print("3. Custom ALL (Clone base of Cloned) - Fully customizable, Can Clone of Cloned Base")
-            
-            while True:
-                mode = input("\nType number (1, 2, or 3): ")
-                if mode in ["1", "2", "3"]:
-                    break
-                else:
-                    print("Invalid selection. Please try again.")
+        mode = input("\nEnter mode number (1, 2, or 3) [default: 2]: ").strip() or "2"
+        default_pkg = "universe.messenger"
         
         if mode == "1":
             self.config.new_package_name = default_pkg
             self.config.new_folder_name = self.config.current_folder_name
         elif mode == "2":
-            if RICH_AVAILABLE:
-                self.config.new_package_name = Prompt.ask(
-                    "[yellow]Enter the new package name without the 'com'[/yellow]",
-                    default=default_pkg
-                )
-                self.config.new_folder_name = Prompt.ask(
-                    "[yellow]Enter the new folder name[/yellow]",
-                    default=self.config.current_folder_name
-                )
-            else:
-                self.config.new_package_name = input(f"Enter the new package name without the 'com': ") or default_pkg
-                self.config.new_folder_name = input(f"Enter the new folder name: ") or self.config.current_folder_name
-        else:  # mode == "3"
-            if RICH_AVAILABLE:
-                self.config.new_package_name = Prompt.ask(
-                    "[yellow]Enter the new package name without the 'com'[/yellow]",
-                    default=default_pkg
-                )
-                self.config.new_folder_name = Prompt.ask(
-                    "[yellow]Enter the new folder name[/yellow]",
-                    default=self.config.current_folder_name
-                )
-                default_search = "com.universe.messenger" if self.config.current_folder_name == "WhatsApp" else "com.gbwhatsapp"
-                self.config.custom_search_pattern = Prompt.ask(
-                    "[yellow]Enter the custom search pattern (e.g. com.universe.messenger)[/yellow]",
-                    default=default_search
-                )
-            else:
-                self.config.new_package_name = input(f"Enter the new package name without the 'com': ") or default_pkg
-                self.config.new_folder_name = input(f"Enter the new folder name: ") or self.config.current_folder_name
-                default_search = "com.whatsapp" if self.config.current_folder_name == "WhatsApp" else "com.whatsapp.w4b"
-                self.config.custom_search_pattern = input(f"Enter the custom search pattern (default: {default_search}): ") or default_search
-                    
+            pkg_input = input("\nEnter new package name without 'com.' prefix (e.g. 'towartz.wa') [default: 'towartz.wa']: ").strip() or "towartz.wa"
+            self.config.new_package_name = pkg_input.removeprefix("com.")
+            self.config.new_folder_name = input(f"Enter new storage folder name [default: '{self.config.current_folder_name}']: ").strip() or self.config.current_folder_name
+        else:
+            pkg_input = input("\nEnter new package name without 'com.' prefix [default: 'towartz.wa']: ").strip() or "towartz.wa"
+            self.config.new_package_name = pkg_input.removeprefix("com.")
+            self.config.new_folder_name = input(f"Enter new storage folder name [default: '{self.config.current_folder_name}']: ").strip() or self.config.current_folder_name
+            self.config.custom_search_pattern = input(f"Enter custom search pattern to replace [default: '{self.config.detected_base_pkg}']: ").strip() or self.config.detected_base_pkg
+            
         self.config.new_package_name_path = self.config.new_package_name.replace(".", "/")
     
     def validate_config(self) -> bool:
         if not os.path.isdir(self.config.root_folder):
-            if RICH_AVAILABLE:
-                console.print(f"[bold red]ERROR: The specified folder does not exist: {self.config.root_folder}[/bold red]")
-            else:
-                logger.error(f"The specified folder does not exist: {self.config.root_folder}")
+            print(TerminalUI.colorize(f"\nERROR: The specified directory does not exist: {self.config.root_folder}", TerminalUI.RED))
             return False
             
         if not self.config.new_package_name or not self.config.new_folder_name:
-            if RICH_AVAILABLE:
-                console.print("[bold red]ERROR: Package name and folder name cannot be empty[/bold red]")
-            else:
-                logger.error("Package name and folder name cannot be empty")
+            print(TerminalUI.colorize("\nERROR: Package name and folder name cannot be empty.", TerminalUI.RED))
             return False
             
         return True
     
     def run(self) -> None:
-        if RICH_AVAILABLE:
-            console.print("[bold magenta]Starting WhatsApp Clone Tool[/bold magenta]")
-            console.print("[bold]Configuration:[/bold]")
-            console.print(self.config.get_config_table())
-        else:
-            logger.info("Starting WhatsApp Clone Tool")
-            logger.info(f"Configuration:\n{self.config}")
-        
         if not self.validate_config():
             return
-        
-        if RICH_AVAILABLE:
-            console.print("[bold blue]Processing .smali files[/bold blue]")
-        else:
-            logger.info("Processing .smali files")
             
+        print()
+        self.config.display_config()
+        print()
+        
+        # Process SMALI
+        print(TerminalUI.colorize("[*] Processing .smali files across all multi-DEX folders...", TerminalUI.BOLD + TerminalUI.BLUE))
         smali_processor = SmaliProcessor(self.config)
         total_smali, success_smali = smali_processor.process_all_files()
         
-        if RICH_AVAILABLE:
-            console.print(f"Processed [green]{success_smali}/{total_smali}[/green] .smali files")
-        else:
-            logger.info(f"Processed {success_smali}/{total_smali} .smali files")
-        
-        if RICH_AVAILABLE:
-            console.print("[bold blue]Processing .xml files[/bold blue]")
-        else:
-            logger.info("Processing .xml files")
-            
+        # Process XML
+        print(TerminalUI.colorize("\n[*] Processing .xml files (AndroidManifest, Providers, Permissions, Filepaths)...", TerminalUI.BOLD + TerminalUI.BLUE))
         xml_processor = XmlProcessor(self.config)
         total_xml, success_xml = xml_processor.process_all_files()
         
-        if RICH_AVAILABLE:
-            console.print(f"Processed [green]{success_xml}/{total_xml}[/green] .xml files")
-        else:
-            logger.info(f"Processed {success_xml}/{total_xml} .xml files")
+        # Summary
+        print()
+        headers = ["File Type", "Total Files", "Processed", "Success Rate"]
+        smali_rate = f"{(success_smali/total_smali)*100:.1f}%" if total_smali > 0 else "N/A"
+        xml_rate = f"{(success_xml/total_xml)*100:.1f}%" if total_xml > 0 else "N/A"
         
-        if RICH_AVAILABLE:
-            summary_table = Table(title="Operation Summary", box=box.ROUNDED)
-            summary_table.add_column("File Type", style="cyan")
-            summary_table.add_column("Total Files", style="blue")
-            summary_table.add_column("Processed", style="green")
-            summary_table.add_column("Success Rate", style="yellow")
-            
-            smali_rate = f"{(success_smali/total_smali)*100:.1f}%" if total_smali > 0 else "N/A"
-            xml_rate = f"{(success_xml/total_xml)*100:.1f}%" if total_xml > 0 else "N/A"
-            
-            summary_table.add_row("SMALI", str(total_smali), str(success_smali), smali_rate)
-            summary_table.add_row("XML", str(total_xml), str(success_xml), xml_rate)
-            
-            console.print(summary_table)
-            console.print("[bold green]WhatsApp cloning completed successfully![/bold green]")
-        else:
-            logger.info("Operation Summary:")
-            logger.info(f"SMALI: {success_smali}/{total_smali} files processed")
-            logger.info(f"XML: {success_xml}/{total_xml} files processed")
-            logger.info("WhatsApp cloning completed successfully!")
-        
-        if RICH_AVAILABLE:
-            with console.status("[bold green]Finalizing...", spinner="dots"):
-                time.sleep(2)
-            console.print("\n[bold green]All done! Enjoy your cloned WhatsApp.[/bold green]")
-        else:
-            for _ in range(3):
-                chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-                for char in chars:
-                    sys.stdout.write(f"\r{char} Finalizing...")
-                    sys.stdout.flush()
-                    time.sleep(0.1)
-            print("\nAll done! Enjoy your cloned WhatsApp.")
+        rows = [
+            ["SMALI Bytecode", str(total_smali), str(success_smali), TerminalUI.colorize(smali_rate, TerminalUI.GREEN)],
+            ["XML Resources", str(total_xml), str(success_xml), TerminalUI.colorize(xml_rate, TerminalUI.GREEN)]
+        ]
+        TerminalUI.print_table("Operation Summary", headers, rows)
+        success_icon = "[✓]" if TerminalUI.supports_unicode() else "[OK]"
+        print(TerminalUI.colorize(f"\n{success_icon} WhatsApp cloning completed successfully! Ready for compilation.\n", TerminalUI.BOLD + TerminalUI.GREEN))
 
 
 def main():
-
-    if len(sys.argv) > 1 and (sys.argv[1] == "-help" or sys.argv[1] == "--help" or 
-                             sys.argv[1] == "-h"):
+    if len(sys.argv) > 1 and sys.argv[1] in ["-help", "--help", "-h"]:
         show_help()
     
     try:
@@ -671,24 +637,16 @@ def main():
         cloner.display_intro()
         
         has_args = cloner.parse_arguments()
-        
         if not has_args:
             cloner.setup_interactively()
             
         cloner.run()
         
     except KeyboardInterrupt:
-        if RICH_AVAILABLE:
-            console.print("\n\n[bold red]Process interrupted by user[/bold red]")
-        else:
-            print("\n\nProcess interrupted by user")
+        print(TerminalUI.colorize("\n\n[!] Process interrupted by user.", TerminalUI.YELLOW))
         sys.exit(1)
     except Exception as e:
-        if RICH_AVAILABLE:
-            console.print(f"[bold red]An unexpected error occurred:[/bold red] {e}")
-            console.print_exception()
-        else:
-            logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+        print(TerminalUI.colorize(f"\n[!] An unexpected error occurred: {e}", TerminalUI.RED))
         sys.exit(1)
 
 
