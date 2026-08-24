@@ -21,6 +21,9 @@ import sys
 import re
 import glob
 import time
+import shutil
+import zipfile
+import subprocess
 import argparse
 from typing import List, Tuple, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor
@@ -155,8 +158,8 @@ class TerminalUI:
         print(bl + bot_t.join([h * (w + 2) for w in col_widths]) + br)
 
 
-def render_progress_bar(task_name: str, current: int, total: int, start_time: float, bar_width: int = 25) -> None:
-    """Renders a dynamic real-time progress bar with ETA and rate."""
+def render_progress_bar(task_name: str, current: int, total: int, start_time: float, bar_width: int = 20) -> None:
+    """Renders a single-line dynamic real-time progress bar without spamming."""
     if total <= 0:
         return
     use_unicode = TerminalUI.supports_unicode()
@@ -167,18 +170,20 @@ def render_progress_bar(task_name: str, current: int, total: int, start_time: fl
     filled = int(bar_width * current // total)
     bar = fill_char * filled + empty_char * (bar_width - filled)
     
-    elapsed = time.time() - start_time
-    rate = current / elapsed if elapsed > 0 else 0
+    elapsed = max(time.time() - start_time, 0.001)
+    rate = current / elapsed
     eta = (total - current) / rate if rate > 0 else 0
     
     elapsed_str = time.strftime("%M:%S", time.gmtime(elapsed))
     eta_str = time.strftime("%M:%S", time.gmtime(eta))
     
-    msg = f"\r  {TerminalUI.colorize(task_name, TerminalUI.CYAN)} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] {percent:5.1f}% ({current}/{total}) [{elapsed_str}<{eta_str}, {rate:.1f}it/s]"
+    # Clean single-line update with fixed width and trailing space clearing
+    short_task = f"{task_name[:14]:<14}"
+    msg = f"\r  {TerminalUI.colorize(short_task, TerminalUI.CYAN)} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] {percent:5.1f}% ({current}/{total}) [{elapsed_str}<{eta_str}, {rate:.0f}it/s]   \r"
     sys.stdout.write(msg)
     sys.stdout.flush()
     if current >= total:
-        sys.stdout.write("\n")
+        sys.stdout.write(f"\r  {TerminalUI.colorize(short_task, TerminalUI.CYAN)} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] 100.0% ({total}/{total}) [{elapsed_str}, {rate:.0f}it/s]   \n")
         sys.stdout.flush()
 
 
@@ -235,11 +240,19 @@ OPTIONS:
     --workers INT         Number of worker threads for parallel processing
                           (Default: 8)
 
+    --build               Automatically recompile with Apktool and package final cloned APK
+    --base-apk FILE       Path to original base.apk template for 1:1 direct-copy exact ZIP repack
+    --out-apk FILE        Output path for final signed APK (default: <package>_cloned.apk)
+    --keystore FILE       Path to .jks keystore for signing (default: auto-detected)
+
     -h, --help            Display this help message
 
 EXAMPLES:
     # Auto-detect base and clone with custom package name
     python whatsapp_clone.py ./decompiled_apk --mode 2 --package mywa --name MyWA
+
+    # Clone and automatically build & sign exact ZIP APK
+    python whatsapp_clone.py ./decompiled_apk --mode 2 --package mywa --name MyWA --build --base-apk base.apk
 
     # Process WhatsApp Business
     python whatsapp_clone.py ./decompiled_w4b --whatsapp-type 2 --mode 1
@@ -323,13 +336,16 @@ class FileProcessor:
         total_files = len(files)
         success_count = 0
         start_time = time.time()
+        last_update_time = 0.0
         
         with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
             for idx, result in enumerate(executor.map(self.process_file, files), 1):
                 if result:
                     success_count += 1
-                if idx % 10 == 0 or idx == total_files:
+                now = time.time()
+                if (now - last_update_time >= 0.08) or idx == total_files:
                     render_progress_bar(self.__class__.__name__, idx, total_files, start_time)
+                    last_update_time = now
                     
         return total_files, success_count
 
@@ -380,13 +396,26 @@ class SmaliProcessor(FileProcessor):
             # Step 2: Replace dot-separated package identifiers
             content = self.pattern_dot.sub(self.new_dot, content)
             
-            # Step 3: Revert official Meta/WhatsApp internal modules back to official namespaces
+            # Step 3: Revert official Meta/WhatsApp internal modules back to official namespaces for class bytecode
             if "Business" in self.config.current_folder_name:
                 content = self.official_dot_pattern.sub(r'\1whatsapp.w4b\2\3', content)
                 content = self.official_slash_pattern.sub(r'\1whatsapp/w4b\2\3', content)
             else:
                 content = self.official_dot_pattern.sub(r'\1whatsapp\2\3', content)
                 content = self.official_slash_pattern.sub(r'\1whatsapp\2\3', content)
+            
+            # Step 4: Protect provider authority and custom permission strings in Smali from duplicate collisions
+            content = re.sub(
+                r'("com\.whatsapp(?:\.w4b)?\.(?:orbit|mlkit|accesslibraryprovider|accountswitching|backup|pixel)[^"]*")',
+                lambda m: m.group(1).replace("com.whatsapp", self.new_dot),
+                content
+            )
+            
+            # Step 5: Normalize any double package occurrences
+            double_pkg_dot = f"{self.new_dot}.{self.config.new_package_name}"
+            double_pkg_slash = f"{self.new_slash}/{self.config.new_package_name_path}"
+            content = content.replace(double_pkg_dot, self.new_dot)
+            content = content.replace(double_pkg_slash, self.new_slash)
             
             with open(file_path, 'w', encoding='utf-8') as file:
                 file.write(content)
@@ -439,14 +468,39 @@ class XmlProcessor(FileProcessor):
             else:
                 content = self.official_xml_pattern.sub(r'\1com.whatsapp\2\3', content)
             
-            # Step 3: Preserve official external package queries in <queries>
+            # Step 3: GUARANTEE that all Provider Authorities and Custom Permissions stay on the CLONED package name!
+            # (Prevents INSTALL_FAILED_DUPLICATE_PERMISSION and INSTALL_FAILED_CONFLICTING_PROVIDER)
+            # 3a. Authorities
+            content = re.sub(
+                r'(android:authorities=")(?:com\.whatsapp(?:\.w4b)?(?:\.' + re.escape(self.config.new_package_name) + r')?|' + re.escape(self.new_pkg) + r')(\.[^"]*")',
+                r'\1' + self.new_pkg + r'\2',
+                content
+            )
+            # 3b. Declared permissions & uses-permissions
+            content = re.sub(
+                r'(<(?:permission|uses-permission)[^>]*android:name=")(?:com\.whatsapp(?:\.w4b)?(?:\.' + re.escape(self.config.new_package_name) + r')?|' + re.escape(self.new_pkg) + r')(\.[^"]*")',
+                r'\1' + self.new_pkg + r'\2',
+                content
+            )
+            # 3c. Component permission attributes
+            content = re.sub(
+                r'(android:(?:permission|readPermission|writePermission)=")(?:com\.whatsapp(?:\.w4b)?(?:\.' + re.escape(self.config.new_package_name) + r')?|' + re.escape(self.new_pkg) + r')(\.[^"]*")',
+                r'\1' + self.new_pkg + r'\2',
+                content
+            )
+            
+            # 3d. Normalize any double package occurrences
+            double_pkg = f"{self.new_pkg}.{self.config.new_package_name}"
+            content = content.replace(double_pkg, self.new_pkg)
+            
+            # Step 4: Preserve official external package queries in <queries>
             content = re.sub(
                 r'(<package\s+android:name=")' + re.escape(self.new_pkg) + r'(\.w4b"/>)',
                 r'\1com.whatsapp\2',
                 content
             )
             
-            # Step 4: Remap Storage Folders (e.g. filepaths.xml)
+            # Step 5: Remap Storage Folders (e.g. filepaths.xml)
             content = self.folder_pattern.sub(self.config.new_folder_name, content)
             
             with open(file_path, 'w', encoding='utf-8') as file:
@@ -458,10 +512,183 @@ class XmlProcessor(FileProcessor):
             return False
 
 
+class ApkPackager:
+    """1:1 Direct-Copy Exact ZIP Repack & APK Signing Engine"""
+
+    @staticmethod
+    def find_tool(tool_name: str) -> Optional[str]:
+        common_locations = {
+            "7z": [r"C:\Windows\system32\7z.exe", r"C:\Program Files\7-Zip\7z.exe"],
+            "apktool": [
+                r"C:\Android\JAR\apktool_3.0.3.jar",
+                r"C:\Android\JAR\apktool.jar"
+            ],
+            "zipalign": [
+                r"C:\Android\build-tools\35.0.0\zipalign.exe",
+                r"C:\Android\build-tools\34.0.0\zipalign.exe"
+            ],
+            "apksigner": [
+                r"C:\Android\build-tools\35.0.0\apksigner.bat",
+                r"C:\Android\build-tools\34.0.0\apksigner.bat"
+            ]
+        }
+        for candidate in common_locations.get(tool_name, []):
+            if os.path.exists(candidate):
+                return candidate
+
+        path_tool = shutil.which(tool_name)
+        if path_tool:
+            return path_tool
+            
+        return None
+
+    @staticmethod
+    def build_with_apktool(decompiled_folder: str, output_unsigned: str, apktool_jar: Optional[str] = None) -> bool:
+        """Recompile decompiled folder into unsigned APK using Apktool."""
+        tool_path = apktool_jar or ApkPackager.find_tool("apktool")
+        if not tool_path or not os.path.exists(tool_path):
+            print(TerminalUI.colorize("  [!] Apktool not found. Please specify path.", TerminalUI.RED))
+            return False
+            
+        print(TerminalUI.colorize(f"  [+] Recompiling with Apktool: {os.path.basename(tool_path)}...", TerminalUI.CYAN))
+        if tool_path.lower().endswith(".jar"):
+            cmd = ["java", "-jar", tool_path, "b", decompiled_folder, "-o", output_unsigned]
+        else:
+            cmd = [tool_path, "b", decompiled_folder, "-o", output_unsigned]
+
+        try:
+            p = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            if p.returncode != 0:
+                print(TerminalUI.colorize(f"  [!] Apktool build failed:\n{p.stderr}", TerminalUI.RED))
+                return False
+            print(TerminalUI.colorize("  [✓] Bytecode & Manifest compiled into unsigned APK.", TerminalUI.GREEN))
+            return True
+        except Exception as e:
+            print(TerminalUI.colorize(f"  [!] Failed to execute Apktool: {e}", TerminalUI.RED))
+            return False
+
+    @staticmethod
+    def repack_exact_copy(
+        base_apk: str, 
+        unsigned_apk: str, 
+        output_aligned: str, 
+        output_signed: str, 
+        keystore: Optional[str] = None, 
+        keypass: str = "pass:towartz123", 
+        keyalias: str = "towartz"
+    ) -> bool:
+        """
+        Direct 1:1 bitwise copy of base.apk, in-place removal of old signature blocks,
+        in-place injection of updated DEX & manifest, 4-byte zipalign, and V1/V2/V3 signing.
+        """
+        try:
+            seven_zip = ApkPackager.find_tool("7z")
+            zipalign = ApkPackager.find_tool("zipalign")
+            apksigner = ApkPackager.find_tool("apksigner")
+            
+            stage_dir = os.path.join(os.path.dirname(unsigned_apk) or ".", "stage_update")
+            if os.path.exists(stage_dir):
+                shutil.rmtree(stage_dir)
+            os.makedirs(stage_dir, exist_ok=True)
+            
+            # Step 1: Extract updated DEX & AndroidManifest from unsigned APK
+            update_files = []
+            with zipfile.ZipFile(unsigned_apk, 'r') as zc:
+                for name in zc.namelist():
+                    if name == 'AndroidManifest.xml' or (name.startswith('classes') and name.endswith('.dex')):
+                        zc.extract(name, stage_dir)
+                        update_files.append(name)
+            
+            temp_copy = os.path.join(os.path.dirname(unsigned_apk) or ".", "temp_direct_copy.apk")
+            if os.path.exists(temp_copy):
+                os.remove(temp_copy)
+            
+            # Step 2: 1:1 direct bitwise copy of base.apk
+            print(TerminalUI.colorize(f"  [1] 1:1 Copying base archive ({os.path.basename(base_apk)})...", TerminalUI.CYAN))
+            shutil.copyfile(base_apk, temp_copy)
+            
+            if seven_zip:
+                # Remove old signature blocks using 7z
+                print(TerminalUI.colorize("  [2] Removing old signature files from copied APK...", TerminalUI.CYAN))
+                cmd_del = [seven_zip, 'd', '-tzip', temp_copy, 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'META-INF/*.EC', 'META-INF/MANIFEST.MF']
+                subprocess.run(cmd_del, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # In-place inject updated DEX & AndroidManifest
+                print(TerminalUI.colorize("  [3] In-place updating modified DEX and AndroidManifest into APK...", TerminalUI.CYAN))
+                subprocess.run([seven_zip, 'a', '-tzip', temp_copy, '*'], cwd=stage_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            else:
+                # Python fallback with metadata preservation
+                print(TerminalUI.colorize("  [2] In-place updating modified DEX and AndroidManifest (Python engine)...", TerminalUI.CYAN))
+                repack_unaligned = os.path.join(os.path.dirname(unsigned_apk) or ".", "temp_py_repack.apk")
+                def is_sig(n):
+                    u = n.upper()
+                    return u.startswith('META-INF/') and (u.endswith('.SF') or u.endswith('.RSA') or u.endswith('.DSA') or u.endswith('.EC') or u == 'META-INF/MANIFEST.MF')
+                
+                with zipfile.ZipFile(unsigned_apk, 'r') as zc, zipfile.ZipFile(base_apk, 'r') as zb:
+                    cloned_data = {n: zc.read(n) for n in update_files}
+                    with zipfile.ZipFile(repack_unaligned, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+                        for item in zb.infolist():
+                            if is_sig(item.filename):
+                                continue
+                            if item.filename in cloned_data:
+                                zout.writestr(item, cloned_data[item.filename])
+                            else:
+                                zout.writestr(item, zb.read(item.filename))
+                temp_copy = repack_unaligned
+            
+            shutil.rmtree(stage_dir, ignore_errors=True)
+            
+            # Step 3: Zipalign 4-byte
+            if zipalign:
+                print(TerminalUI.colorize("  [4] Running 4-byte zipalign...", TerminalUI.CYAN))
+                if os.path.exists(output_aligned):
+                    os.remove(output_aligned)
+                subprocess.run([zipalign, '-f', '-p', '4', temp_copy, output_aligned], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            else:
+                shutil.copyfile(temp_copy, output_aligned)
+            
+            if os.path.exists(temp_copy):
+                os.remove(temp_copy)
+            
+            # Step 4: apksigner V1+V2+V3
+            if apksigner and keystore and os.path.exists(keystore):
+                print(TerminalUI.colorize("  [5] Signing with apksigner (V1, V2, V3)...", TerminalUI.CYAN))
+                if os.path.exists(output_signed):
+                    os.remove(output_signed)
+                cmd_sign = [
+                    apksigner, 'sign',
+                    '--ks', keystore,
+                    '--ks-pass', keypass,
+                    '--ks-key-alias', keyalias,
+                    '--key-pass', keypass,
+                    '--out', output_signed,
+                    output_aligned
+                ]
+                subprocess.run(cmd_sign, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                
+                # Verify
+                print(TerminalUI.colorize("  [6] Verifying final APK signature...", TerminalUI.CYAN))
+                subprocess.run([apksigner, 'verify', output_signed], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                print(TerminalUI.colorize(f"\n[SUCCESS] Final 1:1 copied and updated APK ready at: {output_signed}", TerminalUI.BOLD + TerminalUI.GREEN))
+            else:
+                print(TerminalUI.colorize(f"\n[SUCCESS] Aligned APK ready at: {output_aligned}", TerminalUI.BOLD + TerminalUI.GREEN))
+            
+            return True
+        except Exception as e:
+            print(TerminalUI.colorize(f"  [!] Packaging failed: {e}", TerminalUI.RED))
+            return False
+
+
 class WhatsAppCloner:
     
     def __init__(self):
         self.config = WhatsAppCloneConfig()
+        self.build_apk = False
+        self.base_apk = None
+        self.out_apk = None
+        self.keystore = None
+        self.keypass = "pass:towartz123"
+        self.keyalias = "towartz"
         
     def display_intro(self):
         title = "WhatsApp Clone Tool"
@@ -472,6 +699,7 @@ class WhatsAppCloner:
             TerminalUI.colorize("[+] Auto-detects base package from AndroidManifest.xml", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Remaps all 11+ Content Provider authorities (Prevents Conflicting Provider)", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Remaps all custom permissions & multi-DEX smali folders", TerminalUI.CYAN),
+            TerminalUI.colorize("[+] 1:1 Direct-Copy Exact ZIP Repack & Signing Engine", TerminalUI.CYAN),
             "",
             TerminalUI.colorize("Author: YouTube@66XZD", TerminalUI.DIM)
         ]
@@ -496,6 +724,12 @@ class WhatsAppCloner:
             "--workers", type=int, default=8,
             help="Number of worker threads for parallel processing (Default: 8)"
         )
+        parser.add_argument("--build", action="store_true", help="Automatically build & repack final cloned APK")
+        parser.add_argument("--base-apk", help="Path to base.apk template for 1:1 direct-copy repack")
+        parser.add_argument("--out-apk", help="Output path for final signed APK")
+        parser.add_argument("--keystore", help="Path to keystore .jks for signing")
+        parser.add_argument("--key-pass", default="pass:towartz123", help="Keystore password (default: pass:towartz123)")
+        parser.add_argument("--key-alias", default="towartz", help="Keystore alias (default: towartz)")
         parser.add_argument("-h", "--help", action="store_true", help="Show help message and exit")
         
         args = parser.parse_args()
@@ -508,6 +742,12 @@ class WhatsAppCloner:
             self.config.detect_from_manifest()
         
         self.config.max_workers = args.workers or 8
+        self.build_apk = args.build
+        self.base_apk = args.base_apk
+        self.out_apk = args.out_apk
+        self.keystore = args.keystore or (os.path.join(os.path.dirname(self.config.root_folder) if self.config.root_folder else ".", "towartz.jks"))
+        self.keypass = args.key_pass
+        self.keyalias = args.key_alias
         
         if args.folder and args.mode:
             self.setup_from_args(args)
@@ -634,7 +874,43 @@ class WhatsAppCloner:
         ]
         TerminalUI.print_table("Operation Summary", headers, rows)
         success_icon = "[✓]" if TerminalUI.supports_unicode() else "[OK]"
-        print(TerminalUI.colorize(f"\n{success_icon} WhatsApp cloning completed successfully! Ready for compilation.\n", TerminalUI.BOLD + TerminalUI.GREEN))
+        print(TerminalUI.colorize(f"\n{success_icon} WhatsApp cloning completed successfully!\n", TerminalUI.BOLD + TerminalUI.GREEN))
+        
+        # Check automatic build/repack
+        base_dir = os.path.dirname(self.config.root_folder) or "."
+        default_base_apk = os.path.join(base_dir, "base.apk")
+        
+        should_build = self.build_apk
+        if not should_build and sys.stdin.isatty():
+            build_choice = input(TerminalUI.colorize("Do you want to automatically build, repack exact ZIP, and sign the cloned APK? (y/N): ", TerminalUI.CYAN)).strip().lower()
+            should_build = (build_choice == 'y' or build_choice == 'yes')
+            
+        if should_build:
+            base_apk_path = self.base_apk or default_base_apk
+            if not os.path.exists(base_apk_path):
+                if sys.stdin.isatty():
+                    base_apk_path = input(f"Enter path to original base.apk [{default_base_apk}]: ").strip() or default_base_apk
+            
+            if not os.path.exists(base_apk_path):
+                print(TerminalUI.colorize(f"  [!] base.apk not found at: {base_apk_path}. Skipping APK packaging.", TerminalUI.YELLOW))
+                return
+                
+            out_unsigned = os.path.join(base_dir, f"{self.config.new_package_name}_unsigned.apk")
+            out_aligned = os.path.join(base_dir, f"{self.config.new_package_name}_aligned.apk")
+            out_signed = self.out_apk or os.path.join(base_dir, f"{self.config.new_package_name}_ExactZip_cloned.apk")
+            
+            print(TerminalUI.colorize("\n[*] Starting 1:1 Direct-Copy Exact ZIP Packaging Pipeline...", TerminalUI.BOLD + TerminalUI.CYAN))
+            built = ApkPackager.build_with_apktool(self.config.root_folder, out_unsigned)
+            if built:
+                ApkPackager.repack_exact_copy(
+                    base_apk=base_apk_path,
+                    unsigned_apk=out_unsigned,
+                    output_aligned=out_aligned,
+                    output_signed=out_signed,
+                    keystore=self.keystore,
+                    keypass=self.keypass,
+                    keyalias=self.keyalias
+                )
 
 
 def main():
