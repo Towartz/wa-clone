@@ -12,7 +12,7 @@ Usage:
     python whatsapp_clone.py [folder_path] [options]
     python whatsapp_clone.py -h/--help
 
-Author: Python by YouTube@66XZD (Deki)
+Author: Python by YouTube@66XZD
 Version: 3.0.0 (Zero Dependencies Edition)
 """
 
@@ -464,7 +464,7 @@ class WhatsAppCloner:
             TerminalUI.colorize("[+] Remaps all 11+ Content Provider authorities (Prevents Conflicting Provider)", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Remaps all custom permissions & multi-DEX smali folders", TerminalUI.CYAN),
             "",
-            TerminalUI.colorize("Author: YouTube@66XZD (Deki)", TerminalUI.DIM)
+            TerminalUI.colorize("Author: YouTube@66XZD", TerminalUI.DIM)
         ]
         TerminalUI.print_panel(title, subtitle, lines, TerminalUI.CYAN)
         print()

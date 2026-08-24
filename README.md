@@ -118,4 +118,4 @@ python whatsapp_clone.py ./whatsapp_decompiled --mode 2 --package mywa --name My
 ## 🤝 Credits
 
 - Original script ported from .bat and .ps1 scripts
-- Python version by YouTube@66XZD (Deki)
+- Python version by YouTube@66XZD
