@@ -1024,11 +1024,76 @@ class WhatsAppCloner:
             
         self.config.new_package_name_path = self.config.new_package_name.replace(".", "/")
     
+    def find_local_candidates(self) -> List[Tuple[str, str, str]]:
+        """
+        Scans current directory for candidate APK files and decompiled folders.
+        Returns list of (absolute_path, type_label, info_str).
+        """
+        candidates = []
+        cwd = os.getcwd()
+        
+        # 1. Look for APK files in current directory
+        try:
+            for f in sorted(os.listdir(cwd)):
+                full_path = os.path.join(cwd, f)
+                if os.path.isfile(full_path) and f.lower().endswith(".apk"):
+                    f_lower = f.lower()
+                    if any(tag in f_lower for tag in ("cloned", "unsigned", "unaligned", "aligned", "directcopy", "temp_")):
+                        continue
+                    size_mb = os.path.getsize(full_path) / (1024 * 1024)
+                    candidates.append((full_path, "APK File", f"{size_mb:.1f} MB"))
+        except Exception:
+            pass
+            
+        # 2. Look for decompiled folders in current directory
+        try:
+            for d in sorted(os.listdir(cwd)):
+                full_dir = os.path.join(cwd, d)
+                if os.path.isdir(full_dir) and d not in ("build", ".cache", ".git", "dist", "stage_update", "__pycache__"):
+                    manifest = os.path.join(full_dir, "AndroidManifest.xml")
+                    if os.path.exists(manifest):
+                        candidates.append((full_dir, "Decompiled Folder", "AndroidManifest.xml found"))
+        except Exception:
+            pass
+            
+        return candidates
+
     def setup_interactively(self) -> None:
         if not self.config.root_folder:
-            prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK or APK file", TerminalUI.CYAN)
-            user_input = input(f"{prompt_str} (or Enter for current dir): ").strip() or os.getcwd()
-            target_path = os.path.abspath(user_input)
+            candidates = self.find_local_candidates()
+            selected_path = None
+            
+            if len(candidates) == 1:
+                path, kind, info = candidates[0]
+                disp_name = os.path.basename(path)
+                check_icon = "[+]" if TerminalUI.supports_unicode() else "[+]"
+                print(f"\n{TerminalUI.colorize(check_icon, TerminalUI.GREEN)} Auto-detected source: {TerminalUI.colorize(disp_name, TerminalUI.BOLD + TerminalUI.CYAN)} ({kind}, {info})")
+                use_auto = input(f"Use this target? [Y/n/custom path, default: Y]: ").strip()
+                if not use_auto or use_auto.lower() in ('y', 'yes'):
+                    selected_path = path
+                elif use_auto.lower() not in ('n', 'no'):
+                    selected_path = os.path.abspath(use_auto)
+            elif len(candidates) > 1:
+                print(f"\n{TerminalUI.colorize('[*]', TerminalUI.CYAN)} Found multiple APK / decompiled targets in current directory:")
+                for idx, (path, kind, info) in enumerate(candidates, 1):
+                    disp_name = os.path.basename(path)
+                    print(f"  {TerminalUI.colorize(f'{idx}.', TerminalUI.YELLOW)} {disp_name:<30} ({TerminalUI.colorize(kind, TerminalUI.WHITE)}, {info})")
+                print(f"  {TerminalUI.colorize(f'{len(candidates)+1}.', TerminalUI.YELLOW)} Enter custom path manually")
+                
+                sel = input(f"\nSelect target [1-{len(candidates)+1}, default: 1]: ").strip() or "1"
+                try:
+                    sel_idx = int(sel)
+                    if 1 <= sel_idx <= len(candidates):
+                        selected_path = candidates[sel_idx - 1][0]
+                except ValueError:
+                    selected_path = os.path.abspath(sel)
+            
+            if not selected_path:
+                prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK or APK file", TerminalUI.CYAN)
+                user_input = input(f"{prompt_str} (or Enter for current dir): ").strip() or os.getcwd()
+                selected_path = os.path.abspath(user_input)
+                
+            target_path = os.path.abspath(selected_path)
             if os.path.isfile(target_path) and target_path.lower().endswith(".apk"):
                 self.base_apk = target_path
                 self.build_apk = True
