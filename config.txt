@@ -31,3 +31,6 @@ OUTPUT_DIR=dist
 
 # Automatically clean up intermediate build files (*_unsigned.apk, staging folders)
 AUTO_CLEAN_BUILD=true
+
+# Check for tool updates (Apktool, APKEditor) on launch
+CHECK_TOOL_UPDATES=false

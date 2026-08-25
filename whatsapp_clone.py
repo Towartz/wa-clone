@@ -25,6 +25,8 @@ import shutil
 import zipfile
 import subprocess
 import argparse
+import json
+import urllib.request
 from typing import List, Tuple, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -485,6 +487,9 @@ OPTIONS:
     --sign                Sign the output APK with apksigner (Default: unsigned)
     --keystore FILE       Path to .jks keystore for signing (default: auto-detected)
     --clean               Force clean re-decompilation if decompiled folder already exists
+
+    --check-tools         Check GitHub releases for Apktool and APKEditor updates
+    --update-tools        Automatically download and update tool JARs to latest releases
 
     -h, --help            Display this help message
 
@@ -954,6 +959,229 @@ DEFAULT_WORKERS=12
                 pass
 
 
+class ToolUpdater:
+    """Auto-detects and updates tool JARs from official GitHub releases."""
+
+    TOOLS = {
+        "apktool": {
+            "name": "Apktool",
+            "repo": "iBotPeaches/Apktool",
+            "file": "apktool.jar",
+            "prop": "apktool.properties",
+            "key": "application.version",
+            "pattern": r"^apktool_.*\.jar$"
+        },
+        "apkeditor": {
+            "name": "APKEditor",
+            "repo": "REAndroid/APKEditor",
+            "file": "APKEditor.jar",
+            "prop": "apkeditor.properties",
+            "key": "app.version",
+            "pattern": r"^APKEditor-.*\.jar$"
+        }
+    }
+
+    @staticmethod
+    def get_tools_dir() -> str:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        tools_dir = os.path.join(script_dir, "tools")
+        os.makedirs(tools_dir, exist_ok=True)
+        return tools_dir
+
+    @classmethod
+    def get_local_version(cls, tool_key: str) -> Optional[str]:
+        info = cls.TOOLS.get(tool_key)
+        if not info:
+            return None
+        tools_dir = cls.get_tools_dir()
+        jar_path = os.path.join(tools_dir, info["file"])
+        if not os.path.exists(jar_path):
+            return None
+        try:
+            with zipfile.ZipFile(jar_path, 'r') as zf:
+                if info["prop"] in zf.namelist():
+                    content = zf.read(info["prop"]).decode('utf-8', errors='ignore')
+                    for line in content.splitlines():
+                        if '=' in line:
+                            k, v = line.split('=', 1)
+                            if k.strip() == info["key"]:
+                                return v.strip().lstrip('vV')
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def get_latest_release(cls, tool_key: str) -> Optional[Dict]:
+        info = cls.TOOLS.get(tool_key)
+        if not info:
+            return None
+        url = f"https://api.github.com/repos/{info['repo']}/releases/latest"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/vnd.github.v3+json"
+            }
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                tag_name = data.get("tag_name", "").lstrip("vV")
+                assets = data.get("assets", [])
+                jar_asset = None
+                pattern = re.compile(info["pattern"], re.IGNORECASE)
+                for asset in assets:
+                    if pattern.match(asset.get("name", "")):
+                        jar_asset = asset
+                        break
+                if not jar_asset:
+                    for asset in assets:
+                        if asset.get("name", "").endswith(".jar"):
+                            jar_asset = asset
+                            break
+                return {
+                    "tag": tag_name,
+                    "published_at": data.get("published_at", "")[:10],
+                    "asset_name": jar_asset.get("name") if jar_asset else None,
+                    "download_url": jar_asset.get("browser_download_url") if jar_asset else None,
+                    "size": jar_asset.get("size", 0) if jar_asset else 0,
+                    "html_url": data.get("html_url", "")
+                }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_version(v_str: str) -> Tuple[int, ...]:
+        clean = re.sub(r'[^0-9.]', '', v_str)
+        parts = []
+        for p in clean.split('.'):
+            if p.isdigit():
+                parts.append(int(p))
+        return tuple(parts)
+
+    @classmethod
+    def check_updates(cls) -> List[Dict]:
+        results = []
+        for key, info in cls.TOOLS.items():
+            local_ver = cls.get_local_version(key)
+            remote = cls.get_latest_release(key)
+            if not remote:
+                results.append({
+                    "key": key,
+                    "name": info["name"],
+                    "local": local_ver or "Missing",
+                    "latest": "Offline/Error",
+                    "has_update": False,
+                    "remote": None
+                })
+                continue
+
+            latest_ver = remote["tag"]
+            has_update = False
+            if local_ver is None:
+                has_update = True
+            else:
+                loc_tuple = cls._parse_version(local_ver)
+                rem_tuple = cls._parse_version(latest_ver)
+                has_update = (rem_tuple > loc_tuple)
+
+            results.append({
+                "key": key,
+                "name": info["name"],
+                "local": local_ver or "Missing",
+                "latest": latest_ver,
+                "has_update": has_update,
+                "remote": remote
+            })
+        return results
+
+    @classmethod
+    def download_tool(cls, tool_key: str, download_url: str, expected_size: int = 0) -> bool:
+        info = cls.TOOLS.get(tool_key)
+        if not info:
+            return False
+        tools_dir = cls.get_tools_dir()
+        target_path = os.path.join(tools_dir, info["file"])
+        temp_path = target_path + ".tmp"
+        
+        req = urllib.request.Request(
+            download_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        )
+        
+        print(TerminalUI.colorize(f"\n  [*] Downloading {info['name']} from GitHub releases...", TerminalUI.CYAN))
+        start_time = time.time()
+        last_update = 0.0
+        downloaded = 0
+        chunk_size = 64 * 1024
+        
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp, open(temp_path, 'wb') as f:
+                total_bytes = expected_size or int(resp.headers.get('Content-Length', 0))
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    now = time.time()
+                    if (now - last_update >= 0.08) or (total_bytes and downloaded >= total_bytes):
+                        elapsed = max(now - start_time, 0.001)
+                        rate_mb = (downloaded / (1024 * 1024)) / elapsed
+                        down_mb = downloaded / (1024 * 1024)
+                        if total_bytes > 0:
+                            tot_mb = total_bytes / (1024 * 1024)
+                            pct = (downloaded / total_bytes) * 100.0
+                            eta_sec = (total_bytes - downloaded) / (rate_mb * 1024 * 1024) if rate_mb > 0 else 0
+                            eta_str = time.strftime("%M:%S", time.gmtime(eta_sec))
+                            bar_len = 20
+                            filled = int(bar_len * downloaded // total_bytes)
+                            bar = "█" * filled + "░" * (bar_len - filled)
+                            sys.stdout.write(f"\r  {TerminalUI.colorize(info['name'], TerminalUI.BOLD + TerminalUI.WHITE):<14} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] {pct:5.1f}% ({down_mb:.1f}/{tot_mb:.1f} MB) [{rate_mb:.2f} MB/s, ETA: {eta_str}]\033[K\r")
+                        else:
+                            sys.stdout.write(f"\r  {TerminalUI.colorize(info['name'], TerminalUI.BOLD + TerminalUI.WHITE):<14} ({down_mb:.1f} MB downloaded) [{rate_mb:.2f} MB/s]\033[K\r")
+                        sys.stdout.flush()
+                        last_update = now
+                        
+            if os.path.exists(target_path):
+                os.remove(target_path)
+            shutil.move(temp_path, target_path)
+            total_mb = downloaded / (1024 * 1024)
+            sys.stdout.write(f"\r  {TerminalUI.colorize('[✓]', TerminalUI.BOLD + TerminalUI.GREEN)} {TerminalUI.colorize(info['name'], TerminalUI.BOLD + TerminalUI.WHITE):<12} [████████████████████] 100.0% ({total_mb:.1f} MB) [Updated]\033[K\n")
+            sys.stdout.flush()
+            return True
+        except Exception as e:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+            print(TerminalUI.colorize(f"\n  [!] Download failed for {info['name']}: {e}", TerminalUI.RED))
+            return False
+
+    @classmethod
+    def display_update_table(cls, updates: List[Dict]) -> None:
+        headers = ["Tool Name", "Local Version", "Latest GitHub Release", "Status"]
+        rows = []
+        for item in updates:
+            if item["has_update"]:
+                status = TerminalUI.colorize("⚡ Update Available", TerminalUI.BOLD + TerminalUI.YELLOW)
+            elif item["local"] == "Missing":
+                status = TerminalUI.colorize("❌ Missing", TerminalUI.RED)
+            elif "error" in item["latest"].lower() or "offline" in item["latest"].lower():
+                status = TerminalUI.colorize("⚠️ Offline", TerminalUI.DIM)
+            else:
+                status = TerminalUI.colorize("✓ Up to date", TerminalUI.GREEN)
+            rows.append([
+                item["name"],
+                item["local"],
+                item["latest"],
+                status
+            ])
+        TerminalUI.print_table("Tool JARs Update Status", headers, rows)
+
+
 class ApkPackager:
     """1:1 Direct-Copy Exact ZIP Repack & APK Signing Engine"""
 
@@ -1221,12 +1449,22 @@ class WhatsAppCloner:
         parser.add_argument("--key-pass", help="Keystore password (default from config)")
         parser.add_argument("--key-alias", help="Keystore alias (default from config)")
         parser.add_argument("--clean", "--force-decompile", action="store_true", help="Force clean re-decompilation if decompiled folder already exists")
+        parser.add_argument("--check-tools", "--check-updates", action="store_true", help="Check GitHub releases for tool updates")
+        parser.add_argument("--update-tools", action="store_true", help="Automatically download and update tool JARs to latest releases")
         parser.add_argument("-h", "--help", action="store_true", help="Show help message and exit")
         
         args = parser.parse_args()
         
         if args.help:
             show_help()
+            
+        if args.check_tools:
+            self.check_and_update_tools(auto_download=False)
+            sys.exit(0)
+            
+        if args.update_tools:
+            self.check_and_update_tools(auto_download=True)
+            sys.exit(0)
         
         if args.folder:
             target_path = os.path.abspath(args.folder)
@@ -1357,26 +1595,55 @@ class WhatsAppCloner:
             
         return candidates
 
+    def check_and_update_tools(self, auto_download: bool = False) -> None:
+        print(TerminalUI.colorize("[*] Checking official GitHub releases for tool updates...", TerminalUI.BOLD + TerminalUI.CYAN))
+        updates = ToolUpdater.check_updates()
+        print()
+        ToolUpdater.display_update_table(updates)
+        print()
+        
+        has_any_update = any(u["has_update"] for u in updates)
+        if not has_any_update:
+            print(TerminalUI.colorize("[✓] All tool JARs in ./tools/ are up to date with the latest releases!\n", TerminalUI.BOLD + TerminalUI.GREEN))
+            return
+            
+        should_download = auto_download
+        if not should_download and sys.stdin.isatty():
+            should_download = InteractiveMenu.confirm("Download and upgrade available tool JAR updates now?", default=True)
+            
+        if should_download:
+            for u in updates:
+                if u["has_update"] and u["remote"] and u["remote"]["download_url"]:
+                    ToolUpdater.download_tool(
+                        tool_key=u["key"],
+                        download_url=u["remote"]["download_url"],
+                        expected_size=u["remote"]["size"]
+                    )
+            print(TerminalUI.colorize("\n[✓] Tool upgrade process completed successfully!\n", TerminalUI.BOLD + TerminalUI.GREEN))
+
     def setup_interactively(self) -> None:
-        if not self.config.root_folder:
+        while not self.config.root_folder:
             candidates = self.find_local_candidates()
             selected_path = None
             
-            if candidates:
-                opts = [(os.path.basename(p), f"{k}, {inf}") for p, k, inf in candidates]
-                opts.append(("Enter custom path manually", "Type custom folder or APK path"))
-                sel = InteractiveMenu.select(
-                    "Select Target APK or Decompiled Folder",
-                    opts,
-                    default_index=0
-                )
-                if sel < len(candidates):
-                    selected_path = candidates[sel][0]
+            opts = [(os.path.basename(p), f"{k}, {inf}") for p, k, inf in candidates]
+            opts.append(("Enter custom path manually", "Type custom folder or APK path"))
+            opts.append(("Check & Update Tool JARs (Apktool, APKEditor)", "Query GitHub releases for updates"))
             
-            if not selected_path:
+            sel = InteractiveMenu.select(
+                "Select Target APK or Decompiled Folder",
+                opts,
+                default_index=0
+            )
+            if sel < len(candidates):
+                selected_path = candidates[sel][0]
+            elif sel == len(candidates):
                 prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK or APK file", TerminalUI.CYAN)
                 user_input = input(f"{prompt_str} (or Enter for current dir): ").strip() or os.getcwd()
                 selected_path = os.path.abspath(user_input)
+            elif sel == len(candidates) + 1:
+                self.check_and_update_tools()
+                continue
                 
             target_path = os.path.abspath(selected_path)
             if os.path.isfile(target_path) and target_path.lower().endswith(".apk"):
