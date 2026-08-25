@@ -1157,6 +1157,7 @@ class WhatsAppCloner:
         parser.add_argument("--keystore", help=f"Path to keystore .jks for signing (Default: {self.keystore})")
         parser.add_argument("--key-pass", help="Keystore password (default from config)")
         parser.add_argument("--key-alias", help="Keystore alias (default from config)")
+        parser.add_argument("--clean", "--force-decompile", action="store_true", help="Force clean re-decompilation if decompiled folder already exists")
         parser.add_argument("-h", "--help", action="store_true", help="Show help message and exit")
         
         args = parser.parse_args()
@@ -1173,6 +1174,9 @@ class WhatsAppCloner:
                 decompiled_dir = os.path.join(os.path.dirname(target_path), f"decompiled_{apk_stem}")
                 self.config.root_folder = decompiled_dir
                 
+                if args.clean and os.path.exists(decompiled_dir):
+                    shutil.rmtree(decompiled_dir, ignore_errors=True)
+                    
                 manifest_check = os.path.join(decompiled_dir, "AndroidManifest.xml")
                 if not os.path.exists(manifest_check):
                     decompiled = ApkPackager.decompile_with_apktool(self.base_apk, decompiled_dir)
@@ -1308,7 +1312,20 @@ class WhatsAppCloner:
                 self.config.root_folder = decompiled_dir
                 
                 manifest_check = os.path.join(decompiled_dir, "AndroidManifest.xml")
-                if not os.path.exists(manifest_check):
+                if os.path.exists(manifest_check):
+                    decompile_choice = InteractiveMenu.select(
+                        f"Existing '{os.path.basename(decompiled_dir)}' Detected",
+                        [
+                            ("Clean Fresh Decompile (Recommended)", f"Remove old folder & decompile {os.path.basename(target_path)} cleanly"),
+                            ("Reuse Existing Folder (Fast)", "Keep current files without re-decompiling")
+                        ],
+                        default_index=0
+                    )
+                    if decompile_choice == 0:
+                        print(TerminalUI.colorize(f"  [*] Removing old '{os.path.basename(decompiled_dir)}' for fresh decompile...", TerminalUI.CYAN))
+                        shutil.rmtree(decompiled_dir, ignore_errors=True)
+                
+                if not os.path.exists(decompiled_dir) or not os.path.exists(manifest_check):
                     decompiled = ApkPackager.decompile_with_apktool(self.base_apk, decompiled_dir)
                     if not decompiled:
                         print(TerminalUI.colorize("  [!] Decompilation failed. Aborting.", TerminalUI.RED))
