@@ -73,19 +73,19 @@ It includes an automated 1-click pipeline capable of taking an original APK or s
 
 ```mermaid
 flowchart TD
-    Input["Input: .apk / .apkm / .xapk / .apks / folder"] --> CheckType{"Split Bundle?"}
-    CheckType -->|"Yes (.apkm/.xapk/.apks)"| Merge["APKEditor: Merge Architecture & Density Splits"]
-    CheckType -->|"No (.apk)"| Decompile["Apktool: Decompile to Multi-DEX Smali & XML"]
+    Input["Input: APK / Split Bundle (.apkm, .xapk, .apks)"] --> CheckType{"Split Bundle?"}
+    CheckType -->|"Yes"| Merge["APKEditor: Merge Split Configs"]
+    CheckType -->|"No"| Decompile["Apktool: Decompile Multi-DEX & XML"]
     Merge --> Decompile
     
     Decompile --> CoreEngine["Core Clone Engine"]
-    CoreEngine --> Smali["SmaliProcessor: Multi-Threaded Bytecode Remapping"]
-    CoreEngine --> XML["XmlProcessor: Providers, Permissions & Manifest Remapping"]
+    CoreEngine --> Smali["Smali Bytecode Remapping"]
+    CoreEngine --> XML["XML Resources & Manifest Remapping"]
     
-    Smali --> ApktoolBuild["Apktool: Recompile Modified Smali/XML"]
+    Smali --> ApktoolBuild["Apktool: Recompile Modified Code"]
     XML --> ApktoolBuild
     
-    ApktoolBuild --> ExactRepack["1:1 Bitwise Direct-Copy Exact ZIP Repack Engine"]
+    ApktoolBuild --> ExactRepack["1:1 Bitwise Exact ZIP Repack"]
     ExactRepack --> ZipAlign["zipalign: 4-Byte Page Alignment"]
     ZipAlign --> Output["dist/<package>_ExactZip_cloned.apk"]
 ```
