@@ -187,6 +187,226 @@ def render_progress_bar(task_name: str, current: int, total: int, start_time: fl
         sys.stdout.flush()
 
 
+class TerminalInput:
+    """Zero-dependency cross-platform raw input and ANSI mouse tracking controller."""
+    
+    @staticmethod
+    def is_interactive() -> bool:
+        return hasattr(sys.stdin, "isatty") and sys.stdin.isatty() and hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        
+    @staticmethod
+    def enable_mouse_tracking() -> None:
+        if TerminalInput.is_interactive():
+            try:
+                # Enable X10 + SGR extended mouse tracking and hide cursor
+                sys.stdout.write("\033[?1000h\033[?1006h\033[?25l")
+                sys.stdout.flush()
+            except Exception:
+                pass
+                
+    @staticmethod
+    def disable_mouse_tracking() -> None:
+        if TerminalInput.is_interactive():
+            try:
+                # Disable mouse tracking and restore cursor
+                sys.stdout.write("\033[?1000l\033[?1006l\033[?25h")
+                sys.stdout.flush()
+            except Exception:
+                pass
+
+    @staticmethod
+    def get_event() -> Tuple[str, any]:
+        """
+        Reads next user input event (Keystroke or Touch/Mouse click).
+        Returns tuple: ('KEY_UP'|'KEY_DOWN'|'KEY_ENTER'|'KEY_NUM'|'KEY_QUIT'|'MOUSE_CLICK'|'CHAR', value)
+        """
+        if not TerminalInput.is_interactive():
+            line = sys.stdin.readline().strip()
+            return ('LINE', line)
+            
+        if os.name == 'nt':
+            import msvcrt
+            ch = msvcrt.getwch()
+            if ch in ('\x00', '\xe0'):
+                ch2 = msvcrt.getwch()
+                if ch2 == 'H': return ('KEY_UP', None)
+                if ch2 == 'P': return ('KEY_DOWN', None)
+                if ch2 == 'K': return ('KEY_LEFT', None)
+                if ch2 == 'M': return ('KEY_RIGHT', None)
+            elif ch == '\x1b':
+                seq = ""
+                start = time.time()
+                while time.time() - start < 0.05:
+                    if msvcrt.kbhit():
+                        seq += msvcrt.getwch()
+                    else:
+                        time.sleep(0.005)
+                if seq.startswith('[<'):
+                    m = re.match(r'\[<(\d+);(\d+);(\d+)([Mm])', seq)
+                    if m:
+                        btn, x, y, act = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+                        if act == 'M' and btn == 0:  # Left click / touch tap
+                            return ('MOUSE_CLICK', (x, y))
+                elif seq in ('[A', 'OA'): return ('KEY_UP', None)
+                elif seq in ('[B', 'OB'): return ('KEY_DOWN', None)
+                elif seq in ('[C', 'OC'): return ('KEY_RIGHT', None)
+                elif seq in ('[D', 'OD'): return ('KEY_LEFT', None)
+                return ('ESC', None)
+            elif ch in ('\r', '\n', ' '):
+                return ('KEY_ENTER', None)
+            elif ch == '\x03': # Ctrl+C
+                raise KeyboardInterrupt()
+            elif ch in '123456789':
+                return ('KEY_NUM', int(ch))
+            elif ch in ('q', 'Q'):
+                return ('KEY_QUIT', None)
+            elif ch in ('k', 'K'):
+                return ('KEY_UP', None)
+            elif ch in ('j', 'J'):
+                return ('KEY_DOWN', None)
+            return ('CHAR', ch)
+        else:
+            import tty, termios, select
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                ch = sys.stdin.read(1)
+                if ch == '\x1b':
+                    seq = ""
+                    start = time.time()
+                    while time.time() - start < 0.05:
+                        r, _, _ = select.select([sys.stdin], [], [], 0.01)
+                        if r:
+                            seq += sys.stdin.read(1)
+                        else:
+                            break
+                    if seq.startswith('[<'):
+                        m = re.match(r'\[<(\d+);(\d+);(\d+)([Mm])', seq)
+                        if m:
+                            btn, x, y, act = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+                            if act == 'M' and btn == 0:
+                                return ('MOUSE_CLICK', (x, y))
+                    elif seq in ('[A', 'OA'): return ('KEY_UP', None)
+                    elif seq in ('[B', 'OB'): return ('KEY_DOWN', None)
+                    elif seq in ('[C', 'OC'): return ('KEY_RIGHT', None)
+                    elif seq in ('[D', 'OD'): return ('KEY_LEFT', None)
+                    return ('ESC', None)
+                elif ch in ('\r', '\n', ' '):
+                    return ('KEY_ENTER', None)
+                elif ch == '\x03':
+                    raise KeyboardInterrupt()
+                elif ch in '123456789':
+                    return ('KEY_NUM', int(ch))
+                elif ch in ('q', 'Q'):
+                    return ('KEY_QUIT', None)
+                elif ch in ('k', 'K'):
+                    return ('KEY_UP', None)
+                elif ch in ('j', 'J'):
+                    return ('KEY_DOWN', None)
+                return ('CHAR', ch)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+class InteractiveMenu:
+    """Interactive touch/mouse-clickable and keyboard-navigable menu renderer."""
+
+    @classmethod
+    def select(cls, title: str, options: List[Tuple[str, str]], default_index: int = 0, help_hint: str = "Tap/Click item or use ↑/↓ Arrow keys, Numbers, Enter") -> int:
+        """
+        Renders an interactive touch/clickable menu.
+        Returns the chosen 0-based option index.
+        """
+        if not options:
+            return 0
+        if not TerminalInput.is_interactive():
+            print(f"\n{TerminalUI.colorize(title, TerminalUI.BOLD + TerminalUI.CYAN)}")
+            for idx, (label, desc) in enumerate(options, 1):
+                desc_str = f" ({desc})" if desc else ""
+                print(f"  {idx}. {label}{desc_str}")
+            try:
+                ans = input(f"Select [1-{len(options)}, default: {default_index+1}]: ").strip()
+                val = int(ans)
+                if 1 <= val <= len(options):
+                    return val - 1
+            except (EOFError, Exception):
+                pass
+            return default_index
+
+        TerminalInput.enable_mouse_tracking()
+        selected_idx = max(0, min(default_index, len(options) - 1))
+        rendered_lines_count = 0
+        
+        try:
+            while True:
+                lines = []
+                lines.append(f"{TerminalUI.colorize('┌─', TerminalUI.CYAN)} {TerminalUI.colorize(title, TerminalUI.BOLD + TerminalUI.CYAN)}")
+                lines.append(f"{TerminalUI.colorize('│', TerminalUI.CYAN)} {TerminalUI.colorize(help_hint, TerminalUI.DIM)}")
+                lines.append(f"{TerminalUI.colorize('├───────────────────────────────────────────────────', TerminalUI.CYAN)}")
+                
+                for idx, (label, desc) in enumerate(options):
+                    num_badge = f"[{idx + 1}]"
+                    desc_str = f" - {TerminalUI.colorize(desc, TerminalUI.DIM)}" if desc else ""
+                    if idx == selected_idx:
+                        pointer = TerminalUI.colorize(" ➤ ", TerminalUI.BOLD + TerminalUI.GREEN)
+                        item_text = f"{TerminalUI.colorize(num_badge, TerminalUI.BOLD + TerminalUI.YELLOW)} {TerminalUI.colorize(label, TerminalUI.BOLD + TerminalUI.WHITE)}{desc_str}"
+                    else:
+                        pointer = "   "
+                        item_text = f"{TerminalUI.colorize(num_badge, TerminalUI.DIM)} {TerminalUI.colorize(label, TerminalUI.WHITE)}{desc_str}"
+                    lines.append(f"{TerminalUI.colorize('│', TerminalUI.CYAN)}{pointer}{item_text}")
+                
+                lines.append(f"{TerminalUI.colorize('└───────────────────────────────────────────────────', TerminalUI.CYAN)}")
+                
+                if rendered_lines_count > 0:
+                    sys.stdout.write(f"\033[{rendered_lines_count}A\r")
+                
+                for line in lines:
+                    sys.stdout.write(f"\033[2K{line}\n")
+                sys.stdout.flush()
+                rendered_lines_count = len(lines)
+                
+                event_type, event_val = TerminalInput.get_event()
+                
+                if event_type == 'KEY_UP':
+                    selected_idx = (selected_idx - 1) % len(options)
+                elif event_type == 'KEY_DOWN':
+                    selected_idx = (selected_idx + 1) % len(options)
+                elif event_type == 'KEY_NUM':
+                    if 1 <= event_val <= len(options):
+                        selected_idx = event_val - 1
+                        break
+                elif event_type in ('KEY_ENTER', 'KEY_QUIT', 'ESC'):
+                    break
+                elif event_type == 'MOUSE_CLICK':
+                    break
+        finally:
+            TerminalInput.disable_mouse_tracking()
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            
+        return selected_idx
+
+    @classmethod
+    def confirm(cls, prompt_text: str, default: bool = True) -> bool:
+        """Interactive touch/clickable [ Yes ] / [ No ] buttons."""
+        if not TerminalInput.is_interactive():
+            try:
+                ans = input(f"{prompt_text} ({'Y/n' if default else 'y/N'}): ").strip().lower()
+                if not ans:
+                    return default
+                return ans in ('y', 'yes')
+            except (EOFError, Exception):
+                return default
+            
+        options = [
+            ("Yes", "Proceed with build & repack"),
+            ("No", "Skip and leave ready for manual compilation")
+        ]
+        chosen = cls.select(prompt_text, options, default_index=0 if default else 1)
+        return (chosen == 0)
+
+
 # Whitelist of official Meta / WhatsApp submodules whose class bytecode namespaces should remain un-renamed
 OFFICIAL_MODULES = (
     "aborthooks|accesslibraryprovider|accountswitching|adscreation|anr|audioRecording|"
@@ -1063,30 +1283,16 @@ class WhatsAppCloner:
             candidates = self.find_local_candidates()
             selected_path = None
             
-            if len(candidates) == 1:
-                path, kind, info = candidates[0]
-                disp_name = os.path.basename(path)
-                check_icon = "[+]" if TerminalUI.supports_unicode() else "[+]"
-                print(f"\n{TerminalUI.colorize(check_icon, TerminalUI.GREEN)} Auto-detected source: {TerminalUI.colorize(disp_name, TerminalUI.BOLD + TerminalUI.CYAN)} ({kind}, {info})")
-                use_auto = input(f"Use this target? [Y/n/custom path, default: Y]: ").strip()
-                if not use_auto or use_auto.lower() in ('y', 'yes'):
-                    selected_path = path
-                elif use_auto.lower() not in ('n', 'no'):
-                    selected_path = os.path.abspath(use_auto)
-            elif len(candidates) > 1:
-                print(f"\n{TerminalUI.colorize('[*]', TerminalUI.CYAN)} Found multiple APK / decompiled targets in current directory:")
-                for idx, (path, kind, info) in enumerate(candidates, 1):
-                    disp_name = os.path.basename(path)
-                    print(f"  {TerminalUI.colorize(f'{idx}.', TerminalUI.YELLOW)} {disp_name:<30} ({TerminalUI.colorize(kind, TerminalUI.WHITE)}, {info})")
-                print(f"  {TerminalUI.colorize(f'{len(candidates)+1}.', TerminalUI.YELLOW)} Enter custom path manually")
-                
-                sel = input(f"\nSelect target [1-{len(candidates)+1}, default: 1]: ").strip() or "1"
-                try:
-                    sel_idx = int(sel)
-                    if 1 <= sel_idx <= len(candidates):
-                        selected_path = candidates[sel_idx - 1][0]
-                except ValueError:
-                    selected_path = os.path.abspath(sel)
+            if candidates:
+                opts = [(os.path.basename(p), f"{k}, {inf}") for p, k, inf in candidates]
+                opts.append(("Enter custom path manually", "Type custom folder or APK path"))
+                sel = InteractiveMenu.select(
+                    "Select Target APK or Decompiled Folder",
+                    opts,
+                    default_index=0
+                )
+                if sel < len(candidates):
+                    selected_path = candidates[sel][0]
             
             if not selected_path:
                 prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK or APK file", TerminalUI.CYAN)
@@ -1113,41 +1319,42 @@ class WhatsAppCloner:
         self.config.root_folder = os.path.abspath(self.config.root_folder)
         detected_pkg, folder_name = self.config.detect_from_manifest()
         
-        check_icon = "[+]" if TerminalUI.supports_unicode() else "[+]"
-        print(f"\n{TerminalUI.colorize(check_icon, TerminalUI.GREEN)} Detected Base Package: {TerminalUI.colorize(detected_pkg, TerminalUI.BOLD + TerminalUI.CYAN)} ({folder_name})")
-        print("\nSelect WhatsApp Type / Base:")
-        print(f"  {TerminalUI.colorize('1.', TerminalUI.YELLOW)} Auto-detected ({detected_pkg})")
-        print(f"  {TerminalUI.colorize('2.', TerminalUI.YELLOW)} Standard WhatsApp (com.whatsapp)")
-        print(f"  {TerminalUI.colorize('3.', TerminalUI.YELLOW)} WhatsApp Business (com.whatsapp.w4b)")
-        
-        selection = input("\nEnter number (1, 2, or 3) [default: 1]: ").strip() or "1"
-        if selection == "2":
+        # WhatsApp Type / Base selection
+        type_options = [
+            (f"Auto-detected ({detected_pkg})", folder_name),
+            ("Standard WhatsApp", "com.whatsapp (Folder: WhatsApp)"),
+            ("WhatsApp Business", "com.whatsapp.w4b (Folder: WhatsApp Business)")
+        ]
+        sel_type = InteractiveMenu.select("Select WhatsApp Base Type", type_options, default_index=0)
+        if sel_type == 1:
             self.config.detected_base_pkg = "com.whatsapp"
             self.config.current_folder_name = "WhatsApp"
-        elif selection == "3":
+        elif sel_type == 2:
             self.config.detected_base_pkg = "com.whatsapp.w4b"
             self.config.current_folder_name = "WhatsApp Business"
             
-        print("\nSelect Operation Mode:")
-        print(f"  {TerminalUI.colorize('1.', TerminalUI.YELLOW)} Auto (com.universe.messenger)")
-        print(f"  {TerminalUI.colorize('2.', TerminalUI.YELLOW)} Custom Package (Clone original base to new name)")
-        print(f"  {TerminalUI.colorize('3.', TerminalUI.YELLOW)} Custom ALL (Clone of Cloned base with custom search)")
-        
-        mode = input("\nEnter mode number (1, 2, or 3) [default: 2]: ").strip() or "2"
+        # Operation Mode selection
+        mode_options = [
+            ("Auto", "Default clone package (com.universe.messenger)"),
+            ("Custom Package", "Clone base to new custom package name (e.g. towartz.wa)"),
+            ("Custom ALL", "Clone of Cloned base with custom search pattern")
+        ]
+        sel_mode = InteractiveMenu.select("Select Operation Mode", mode_options, default_index=1)
+        mode = str(sel_mode + 1)
         default_pkg = "universe.messenger"
         
         if mode == "1":
             self.config.new_package_name = default_pkg
             self.config.new_folder_name = self.config.current_folder_name
         elif mode == "2":
-            pkg_input = input("\nEnter new package name without 'com.' prefix (e.g. 'towartz.wa') [default: 'towartz.wa']: ").strip() or "towartz.wa"
+            pkg_input = input(TerminalUI.colorize("\nEnter new package name without 'com.' prefix (e.g. 'towartz.wa') [default: 'towartz.wa']: ", TerminalUI.CYAN)).strip() or "towartz.wa"
             self.config.new_package_name = pkg_input.removeprefix("com.")
-            self.config.new_folder_name = input(f"Enter new storage folder name [default: '{self.config.current_folder_name}']: ").strip() or self.config.current_folder_name
+            self.config.new_folder_name = input(TerminalUI.colorize(f"Enter new storage folder name [default: '{self.config.current_folder_name}']: ", TerminalUI.CYAN)).strip() or self.config.current_folder_name
         else:
-            pkg_input = input("\nEnter new package name without 'com.' prefix [default: 'towartz.wa']: ").strip() or "towartz.wa"
+            pkg_input = input(TerminalUI.colorize("\nEnter new package name without 'com.' prefix [default: 'towartz.wa']: ", TerminalUI.CYAN)).strip() or "towartz.wa"
             self.config.new_package_name = pkg_input.removeprefix("com.")
-            self.config.new_folder_name = input(f"Enter new storage folder name [default: '{self.config.current_folder_name}']: ").strip() or self.config.current_folder_name
-            self.config.custom_search_pattern = input(f"Enter custom search pattern to replace [default: '{self.config.detected_base_pkg}']: ").strip() or self.config.detected_base_pkg
+            self.config.new_folder_name = input(TerminalUI.colorize(f"Enter new storage folder name [default: '{self.config.current_folder_name}']: ", TerminalUI.CYAN)).strip() or self.config.current_folder_name
+            self.config.custom_search_pattern = input(TerminalUI.colorize(f"Enter custom search pattern to replace [default: '{self.config.detected_base_pkg}']: ", TerminalUI.CYAN)).strip() or self.config.detected_base_pkg
             
         self.config.new_package_name_path = self.config.new_package_name.replace(".", "/")
     
@@ -1200,8 +1407,10 @@ class WhatsAppCloner:
         
         should_build = self.build_apk
         if not should_build and sys.stdin.isatty():
-            build_choice = input(TerminalUI.colorize("Do you want to automatically build and repack exact ZIP cloned APK? (y/N): ", TerminalUI.CYAN)).strip().lower()
-            should_build = (build_choice == 'y' or build_choice == 'yes')
+            should_build = InteractiveMenu.confirm(
+                "Build & package 1:1 exact ZIP cloned APK now?",
+                default=True
+            )
             
         if should_build:
             base_apk_path = self.base_apk or default_base_apk
