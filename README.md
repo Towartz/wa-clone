@@ -1,45 +1,67 @@
-# WhatsApp Clone Tool
-
-Universal zero-dependency Python utility for creating customized clones of WhatsApp, WhatsApp Lite, and WhatsApp Business applications by modifying package names, content provider authorities, custom permissions, and resources in decompiled APK files.
-
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
-![Dependencies](https://img.shields.io/badge/dependencies-0%20(Pure%20Python)-brightgreen)
-![Python](https://img.shields.io/badge/python-3.8+-green)
-
 <div align="center">
-  <a href="https://f-droid.org/id/packages/com.termux/">
-    <img src="https://f-droid.org/repo/com.termux/en-US/icon_7jMZ7XD80oeucmGEaTwktIRZexLtGWvJfKdVD6Wu2SI=.png" width="120" height="120" alt="Termux">
-    <br>
-    <img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80">
-  </a>
-  <br>
-  <b>Termux: Terminal emulator and Linux environment for Android</b>
+  <h1>WhatsApp Clone Tool</h1>
+  <p><b>Universal zero-dependency Python suite for cloning WhatsApp, WhatsApp Lite, Business & WAMODs.</b></p>
+
+  <p>
+    <a href="https://github.com/Towartz/wa-clone/releases"><img src="https://img.shields.io/github/v/release/Towartz/wa-clone?style=flat-square&color=blue" alt="Latest Release"></a>
+    <a href="https://github.com/Towartz/wa-clone"><img src="https://komarev.com/ghpvc/?username=Towartz-wa-clone&repo=wa-clone&color=blue&style=flat-square&label=Repository+Views" alt="Repository Views"></a>
+    <a href="https://github.com/Towartz/wa-clone/stargazers"><img src="https://img.shields.io/github/stars/Towartz/wa-clone?style=flat-square&color=yellow" alt="GitHub Stars"></a>
+    <a href="https://github.com/Towartz/wa-clone/network/members"><img src="https://img.shields.io/github/forks/Towartz/wa-clone?style=flat-square&color=orange" alt="GitHub Forks"></a>
+    <a href="https://github.com/Towartz/wa-clone/issues"><img src="https://img.shields.io/github/issues/Towartz/wa-clone?style=flat-square&color=red" alt="Open Issues"></a>
+    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.8+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.8+"></a>
+    <img src="https://img.shields.io/badge/Platform-Android%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform Support">
+    <img src="https://img.shields.io/badge/Dependencies-0%20(Pure%20Python)-brightgreen?style=flat-square" alt="Zero Dependencies">
+  </p>
+
+  <p>
+    <a href="#overview">Overview</a> •
+    <a href="#key-features">Features</a> •
+    <a href="#pipeline-architecture">Architecture</a> •
+    <a href="#compatibility-matrix">Compatibility</a> •
+    <a href="#installation--setup">Setup</a> •
+    <a href="#usage-guide">Usage</a> •
+    <a href="#command-line-reference">CLI Reference</a> •
+    <a href="#configuration">Configuration</a> •
+    <a href="#faq--troubleshooting">FAQ</a>
+  </p>
 </div>
-
-## Tutorial YouTube
-
-[![Tutorial: Decompile & Clone WhatsApp](https://img.youtube.com/vi/oYjPnrckKdk/0.jpg)](https://www.youtube.com/watch?v=oYjPnrckKdk)
 
 ---
 
 ## Overview
 
-This tool allows you to create modified clones of WhatsApp applications by replacing package names, Content Provider authorities, custom permissions, and resource references in `.smali` and `.xml` files from a decompiled APK.
+**WhatsApp Clone Tool** is an all-in-one APK cloning and repacking utility. It remaps package identifiers, Content Provider authorities, custom defined permissions, and resources across `.smali` bytecode and `.xml` files.
 
-Supports regular WhatsApp (`com.whatsapp`), WhatsApp Lite (`com.whatsapp.litex`), WhatsApp Business (`com.whatsapp.w4b`), and pre-cloned custom WAMODs.
+It includes an automated 1-click pipeline capable of taking an original APK or split App Bundle (`.apkm`, `.xapk`, `.apks`), merging split configurations, decompiling with Apktool, remapping bytecode, running a 1:1 bitwise exact ZIP repack, and applying 4-byte `zipalign`.
 
 ---
 
-## Features
+## Tutorial Video
 
-- **Zero External Dependencies**: Runs out-of-the-box on Android (Termux), Windows, Linux, and macOS using only Python standard library modules.
-- **1-Click Automated Pipeline**: Accepts `.apk` or split bundles directly to decompile, remap, recompile, exact-repack, and 4-byte zipalign in a single step.
-- **Split APK Bundle Merging**: Automatically merges `.apkm` (APKMirror), `.xapk` (APKPure/Combo), `.apks` (Bundletool), and split APK directories via bundled `APKEditor.jar`.
-- **Bundled Cross-Platform Tools Suite**: Includes `apktool.jar` (v3.0.3), `apksigner.jar` (Build-Tools v37.0.0), `APKEditor.jar` (v1.4.9), and `d8.jar` in `./tools/`.
-- **Automatic Tool Updates**: In-memory inspection and 1-click upgrade engine (`--check-tools` / `--update-tools`) querying upstream GitHub releases.
-- **Touch Screen & Mouse Navigation**: ANSI SGR 1006 mouse tracking supporting touch screen taps (Termux Android) and mouse clicks (VSCode / Windows Terminal), alongside full keyboard controls.
-- **Build-Only Mode**: Bypass Dalvik bytecode and XML processing (`--build-only`) to quickly recompile and repack existing decompiled folders.
-- **Dedicated Distribution Folder**: Automatically routes final cloned APKs to `./dist/` and purges temporary build staging files.
+<div align="center">
+  <a href="https://www.youtube.com/watch?v=oYjPnrckKdk">
+    <img src="https://img.youtube.com/vi/oYjPnrckKdk/maxresdefault.jpg" width="600" alt="Tutorial: Decompile & Clone WhatsApp">
+  </a>
+  <br>
+  <i>Click to watch the step-by-step video guide on YouTube</i>
+</div>
+
+---
+
+## Key Features
+
+- **Zero External Dependencies**: 100% pure Python standard library. Runs cleanly without installing external `pip` packages.
+- **1-Click End-to-End Pipeline**: Directly supply an APK or split bundle to merge, decompile, clone, exact-repack, and 4-byte zipalign in a single step.
+- **Split APK & App Bundle Merging**: Natively merges `.apkm` (APKMirror), `.xapk` (APKPure/Combo), `.apks` (Bundletool), and split APK directories using bundled `APKEditor.jar`.
+- **Bundled Cross-Platform Tools Suite**: Contains pure Java binaries inside `./tools/`:
+  - `apktool.jar` (v3.0.3)
+  - `apksigner.jar` (Android SDK Build-Tools v37.0.0)
+  - `APKEditor.jar` (v1.4.9)
+  - `d8.jar` (Android SDK Build-Tools v37.0.0)
+- **GitHub Releases Auto-Updater**: In-memory inspection and 1-click update engine (`--check-tools` / `--update-tools`) querying upstream GitHub releases.
+- **Touch Screen & Mouse Navigation**: ANSI SGR 1006 mouse tracking support for touch screen taps (Termux Android) and mouse clicks (VSCode / Windows Terminal), alongside full keyboard controls.
+- **Build-Only Fast Packaging Mode**: Bypass Dalvik bytecode and XML processing (`--build-only`) to quickly recompile and repack existing decompiled folders.
+- **Dedicated Distribution Directory**: Output isolation in `./dist/` with automated intermediate build cleanup.
 - **Content Provider Remapping**: Remaps 11+ Content Provider authorities (`accountswitching`, `mlkitinitprovider`, `orbitmessages`, etc.) preventing `INSTALL_FAILED_CONFLICTING_PROVIDER`.
 - **Custom Permission Remapping**: Remaps custom defined permissions preventing `INSTALL_FAILED_DUPLICATE_PERMISSION`.
 - **Multi-DEX Smali Traversal**: Recursively processes `smali`, `smali_classes2` through `smali_classes99`.
@@ -47,20 +69,54 @@ Supports regular WhatsApp (`com.whatsapp`), WhatsApp Lite (`com.whatsapp.litex`)
 
 ---
 
-## Prerequisites
+## Pipeline Architecture
 
-- Python 3.8 or higher
-- Java Runtime Environment (JRE) for executing tool JARs
-
-### Termux Setup:
-```bash
-pkg update && pkg install python git openjdk-17 -y
+```mermaid
+flowchart TD
+    Input["Input: .apk / .apkm / .xapk / .apks / folder"] --> CheckType{"Split Bundle?"}
+    CheckType -->|"Yes (.apkm/.xapk/.apks)"| Merge["APKEditor: Merge Architecture & Density Splits"]
+    CheckType -->|"No (.apk)"| Decompile["Apktool: Decompile to Multi-DEX Smali & XML"]
+    Merge --> Decompile
+    
+    Decompile --> CoreEngine["Core Clone Engine"]
+    CoreEngine --> Smali["SmaliProcessor: Multi-Threaded Bytecode Remapping"]
+    CoreEngine --> XML["XmlProcessor: Providers, Permissions & Manifest Remapping"]
+    
+    Smali --> ApktoolBuild["Apktool: Recompile Modified Smali/XML"]
+    XML --> ApktoolBuild
+    
+    ApktoolBuild --> ExactRepack["1:1 Bitwise Direct-Copy Exact ZIP Repack Engine"]
+    ExactRepack --> ZipAlign["zipalign: 4-Byte Page Alignment"]
+    ZipAlign --> Output["dist/<package>_ExactZip_cloned.apk"]
 ```
 
 ---
 
-## Installation
+## Compatibility Matrix
 
+| Target Application | Default Base Package | Supported Input Formats | CPU Architecture Support | Status |
+|---|---|---|---|---|
+| WhatsApp Messenger | `com.whatsapp` | `.apk`, `.apkm`, `.xapk`, `.apks`, Folder | `arm64-v8a`, `armeabi-v7a`, `x86_64` | Supported |
+| WhatsApp Business | `com.whatsapp.w4b` | `.apk`, `.apkm`, `.xapk`, `.apks`, Folder | `arm64-v8a`, `armeabi-v7a`, `x86_64` | Supported |
+| WhatsApp Lite | `com.whatsapp.litex` | `.apk`, `.apkm`, `.xapk`, `.apks`, Folder | `arm64-v8a`, `armeabi-v7a`, `x86_64` | Supported |
+| Custom WAMODs (GBWA, YoWA, FMWA) | Auto-Detected | `.apk`, Decompiled folder | `arm64-v8a`, `armeabi-v7a`, `x86_64` | Supported |
+
+---
+
+## Installation & Setup
+
+### Prerequisites
+- **Python**: Version 3.8 or higher.
+- **Java**: Java Runtime Environment (JRE 8, 11, 17, or 21) for running tool JARs.
+
+### Android Setup (Termux)
+```bash
+pkg update && pkg install python git openjdk-17 -y
+git clone https://github.com/Towartz/wa-clone.git
+cd wa-clone
+```
+
+### PC Setup (Windows / Linux / macOS)
 ```bash
 git clone https://github.com/Towartz/wa-clone.git
 cd wa-clone
@@ -68,41 +124,39 @@ cd wa-clone
 
 ---
 
-## Usage
+## Usage Guide
 
-### Interactive Mode (Recommended)
+### 1. Interactive Mode (Touch, Click & Keyboard)
 ```bash
 python whatsapp_clone.py
 ```
-Automatically scans the directory for APKs, split bundles, and decompiled targets, presenting a menu with touch, mouse, and keyboard navigation.
+The tool scans your workspace, detects candidate APKs and split bundles, and launches the interactive navigation menu.
 
-### Command Line Mode
-
-#### 1. 1-Click Automated Split Bundle or APK Cloning
+### 2. 1-Click Automated Pipeline
 ```bash
 # Clone directly from an APKM split bundle
 python whatsapp_clone.py WhatsApp.apkm --mode 2 --package mywa --name MyWA
 
-# Clone directly from a standard base.apk
+# Clone directly from an APK file
 python whatsapp_clone.py base.apk --mode 2 --package mywa --name MyWA
 ```
 
-#### 2. Clone Pre-Decompiled Directory
+### 3. Clone Pre-Decompiled Directory
 ```bash
 python whatsapp_clone.py ./decompiled_base --mode 2 --package mywa --name MyWA --build --base-apk base.apk
 ```
 
-#### 3. Build-Only Fast Repack (Skip Cloning)
+### 4. Build-Only Fast Repack (Skip Cloning)
 ```bash
 python whatsapp_clone.py ./decompiled_base --build-only --base-apk base.apk
 ```
 
-#### 4. Split Bundle Merging Only
+### 5. Split Bundle Merging Only
 ```bash
 python whatsapp_clone.py WhatsApp.apkm --merge-only
 ```
 
-#### 5. Check and Upgrade Tool JARs
+### 6. Tool Updates Inspector
 ```bash
 # Check version status against GitHub releases
 python whatsapp_clone.py --check-tools
@@ -113,7 +167,7 @@ python whatsapp_clone.py --update-tools
 
 ---
 
-## Command Line Options
+## Command Line Reference
 
 | Option | Description |
 |---|---|
@@ -140,13 +194,16 @@ python whatsapp_clone.py --update-tools
 
 ## Configuration (`config.txt`)
 
-You can customize tool paths and execution behavior in `config.txt`:
+External tools and default options can be configured in `config.txt`:
 
 ```ini
+# Paths to tool binaries (defaults to ./tools/ JARs)
 APKTOOL_PATH=tools\apktool.jar
 APKSIGNER_PATH=tools\apksigner.jar
 SEVEN_ZIP_PATH=C:\Windows\system32\7z.exe
 ZIPALIGN_PATH=C:\Android\build-tools\35.0.0\zipalign.exe
+
+# Output and signing preferences
 AUTO_SIGN=false
 OUTPUT_DIR=dist
 AUTO_CLEAN_BUILD=true
@@ -156,6 +213,18 @@ DEFAULT_WORKERS=12
 
 ---
 
-## Credits
+## FAQ & Troubleshooting
 
-- Python version by YouTube@66XZD
+### Why is the output APK unsigned by default?
+Unsigned APK output is the default (`AUTO_SIGN=false`) because many users prefer signing with their own custom test keys, V2/V3 schemes, or via mobile tools like ApkToolM. To sign automatically with the built-in keystore, use `--sign` or set `AUTO_SIGN=true` in `config.txt`.
+
+### How does 1:1 Direct-Copy Exact ZIP Repack work?
+Standard Apktool recompilation creates new compression profiles that can cause WhatsApp native library verification to fail. The Direct-Copy engine unpacks compiled DEX files and manifests into the original APK structure with bitwise compression matching and 4-byte page alignment.
+
+---
+
+## Credits & License
+
+- Core Python Implementation by YouTube@66XZD
+- Distributed under the MIT License.
+
