@@ -242,7 +242,8 @@ OPTIONS:
 
     --build               Automatically recompile with Apktool and package final cloned APK
     --base-apk FILE       Path to original base.apk template for 1:1 direct-copy exact ZIP repack
-    --out-apk FILE        Output path for final signed APK (default: <package>_cloned.apk)
+    --out-apk FILE        Output path for final APK (default: <package>_ExactZip_cloned.apk)
+    --sign                Sign the output APK with apksigner (Default: unsigned)
     --keystore FILE       Path to .jks keystore for signing (default: auto-detected)
 
     -h, --help            Display this help message
@@ -720,15 +721,15 @@ class ApkPackager:
     def repack_exact_copy(
         base_apk: str, 
         unsigned_apk: str, 
-        output_aligned: str, 
-        output_signed: str, 
+        output_apk: str, 
+        sign: bool = False,
         keystore: Optional[str] = None, 
         keypass: Optional[str] = None, 
         keyalias: Optional[str] = None
     ) -> bool:
         """
         Direct 1:1 bitwise copy of base.apk, in-place removal of old signature blocks,
-        in-place injection of updated DEX & manifest, 4-byte zipalign, and V1/V2/V3 signing.
+        in-place injection of updated DEX & manifest, 4-byte zipalign, and optional V1/V2/V3 signing.
         """
         keypass = keypass or ToolConfig.get("KEYSTORE_PASS", "pass:towartz123")
         keyalias = keyalias or ToolConfig.get("KEYSTORE_ALIAS", "towartz")
@@ -791,39 +792,52 @@ class ApkPackager:
             shutil.rmtree(stage_dir, ignore_errors=True)
             
             # Step 3: Zipalign 4-byte
+            temp_aligned = os.path.join(os.path.dirname(unsigned_apk) or ".", "temp_aligned.apk")
+            target_aligned = temp_aligned if sign else output_apk
+            
+            if os.path.exists(target_aligned):
+                os.remove(target_aligned)
+                
             if zipalign:
                 print(TerminalUI.colorize("  [4] Running 4-byte zipalign...", TerminalUI.CYAN))
-                if os.path.exists(output_aligned):
-                    os.remove(output_aligned)
-                subprocess.run([zipalign, '-f', '-p', '4', temp_copy, output_aligned], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                subprocess.run([zipalign, '-f', '-p', '4', temp_copy, target_aligned], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             else:
-                shutil.copyfile(temp_copy, output_aligned)
+                shutil.copyfile(temp_copy, target_aligned)
             
             if os.path.exists(temp_copy):
                 os.remove(temp_copy)
             
-            # Step 4: apksigner V1+V2+V3
-            if apksigner and keystore and os.path.exists(keystore):
-                print(TerminalUI.colorize("  [5] Signing with apksigner (V1, V2, V3)...", TerminalUI.CYAN))
-                if os.path.exists(output_signed):
-                    os.remove(output_signed)
-                cmd_sign = [
-                    apksigner, 'sign',
-                    '--ks', keystore,
-                    '--ks-pass', keypass,
-                    '--ks-key-alias', keyalias,
-                    '--key-pass', keypass,
-                    '--out', output_signed,
-                    output_aligned
-                ]
-                subprocess.run(cmd_sign, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                
-                # Verify
-                print(TerminalUI.colorize("  [6] Verifying final APK signature...", TerminalUI.CYAN))
-                subprocess.run([apksigner, 'verify', output_signed], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                print(TerminalUI.colorize(f"\n[SUCCESS] Final 1:1 copied and updated APK ready at: {output_signed}", TerminalUI.BOLD + TerminalUI.GREEN))
+            # Step 4: Optional signing with apksigner (V1+V2+V3)
+            if sign:
+                if apksigner and keystore and os.path.exists(keystore):
+                    print(TerminalUI.colorize("  [5] Signing with apksigner (V1, V2, V3)...", TerminalUI.CYAN))
+                    if os.path.exists(output_apk):
+                        os.remove(output_apk)
+                    cmd_sign = [
+                        apksigner, 'sign',
+                        '--ks', keystore,
+                        '--ks-pass', keypass,
+                        '--ks-key-alias', keyalias,
+                        '--key-pass', keypass,
+                        '--out', output_apk,
+                        temp_aligned
+                    ]
+                    subprocess.run(cmd_sign, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                    
+                    if os.path.exists(temp_aligned):
+                        os.remove(temp_aligned)
+                    
+                    # Verify
+                    print(TerminalUI.colorize("  [6] Verifying final APK signature...", TerminalUI.CYAN))
+                    subprocess.run([apksigner, 'verify', output_apk], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                    print(TerminalUI.colorize(f"\n[SUCCESS] Final signed APK ready at: {output_apk}", TerminalUI.BOLD + TerminalUI.GREEN))
+                else:
+                    print(TerminalUI.colorize("  [!] apksigner or keystore not found. Outputting aligned unsigned APK.", TerminalUI.YELLOW))
+                    if os.path.exists(temp_aligned) and temp_aligned != output_apk:
+                        shutil.move(temp_aligned, output_apk)
+                    print(TerminalUI.colorize(f"\n[SUCCESS] Final unsigned cloned APK ready at: {output_apk}", TerminalUI.BOLD + TerminalUI.GREEN))
             else:
-                print(TerminalUI.colorize(f"\n[SUCCESS] Aligned APK ready at: {output_aligned}", TerminalUI.BOLD + TerminalUI.GREEN))
+                print(TerminalUI.colorize(f"\n[SUCCESS] Final unsigned cloned APK (aligned & ready to sign) ready at: {output_apk}", TerminalUI.BOLD + TerminalUI.GREEN))
             
             return True
         except Exception as e:
@@ -837,11 +851,15 @@ class WhatsAppCloner:
         ToolConfig.ensure_default_config_file()
         self.config = WhatsAppCloneConfig()
         self.build_apk = False
+        self.sign_apk = False
         self.base_apk = None
         self.out_apk = None
         self.keystore = ToolConfig.get("KEYSTORE_PATH", "towartz.jks")
         self.keypass = ToolConfig.get("KEYSTORE_PASS", "pass:towartz123")
         self.keyalias = ToolConfig.get("KEYSTORE_ALIAS", "towartz")
+        
+        auto_sign_cfg = ToolConfig.get("AUTO_SIGN", "false").lower()
+        self.sign_apk = (auto_sign_cfg in ("true", "1", "yes"))
         
         default_workers_str = ToolConfig.get("DEFAULT_WORKERS", "12")
         try:
@@ -858,7 +876,7 @@ class WhatsAppCloner:
             TerminalUI.colorize("[+] Auto-detects base package from AndroidManifest.xml", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Remaps all 11+ Content Provider authorities (Prevents Conflicting Provider)", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Remaps all custom permissions & multi-DEX smali folders", TerminalUI.CYAN),
-            TerminalUI.colorize("[+] 1:1 Direct-Copy Exact ZIP Repack & Signing Engine", TerminalUI.CYAN),
+            TerminalUI.colorize("[+] 1:1 Direct-Copy Exact ZIP Repack Engine (Default: Unsigned)", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Dynamic tool path auto-detection & config.txt support", TerminalUI.CYAN),
             "",
             TerminalUI.colorize("Author: YouTube@66XZD", TerminalUI.DIM)
@@ -886,7 +904,8 @@ class WhatsAppCloner:
         )
         parser.add_argument("--build", action="store_true", help="Automatically build & repack final cloned APK")
         parser.add_argument("--base-apk", help="Path to base.apk template for 1:1 direct-copy repack")
-        parser.add_argument("--out-apk", help="Output path for final signed APK")
+        parser.add_argument("--out-apk", help="Output path for final APK (Default: <package>_ExactZip_cloned.apk)")
+        parser.add_argument("--sign", action="store_true", help="Sign the output APK with apksigner (Default: unsigned)")
         parser.add_argument("--keystore", help=f"Path to keystore .jks for signing (Default: {self.keystore})")
         parser.add_argument("--key-pass", help="Keystore password (default from config)")
         parser.add_argument("--key-alias", help="Keystore alias (default from config)")
@@ -904,6 +923,8 @@ class WhatsAppCloner:
         if args.workers:
             self.config.max_workers = args.workers
         self.build_apk = args.build
+        if args.sign:
+            self.sign_apk = True
         self.base_apk = args.base_apk
         self.out_apk = args.out_apk
         
@@ -1052,7 +1073,7 @@ class WhatsAppCloner:
         
         should_build = self.build_apk
         if not should_build and sys.stdin.isatty():
-            build_choice = input(TerminalUI.colorize("Do you want to automatically build, repack exact ZIP, and sign the cloned APK? (y/N): ", TerminalUI.CYAN)).strip().lower()
+            build_choice = input(TerminalUI.colorize("Do you want to automatically build and repack exact ZIP cloned APK? (y/N): ", TerminalUI.CYAN)).strip().lower()
             should_build = (build_choice == 'y' or build_choice == 'yes')
             
         if should_build:
@@ -1066,8 +1087,7 @@ class WhatsAppCloner:
                 return
                 
             out_unsigned = os.path.join(base_dir, f"{self.config.new_package_name}_unsigned.apk")
-            out_aligned = os.path.join(base_dir, f"{self.config.new_package_name}_aligned.apk")
-            out_signed = self.out_apk or os.path.join(base_dir, f"{self.config.new_package_name}_ExactZip_cloned.apk")
+            out_apk = self.out_apk or os.path.join(base_dir, f"{self.config.new_package_name}_ExactZip_cloned.apk")
             
             print(TerminalUI.colorize("\n[*] Starting 1:1 Direct-Copy Exact ZIP Packaging Pipeline...", TerminalUI.BOLD + TerminalUI.CYAN))
             built = ApkPackager.build_with_apktool(self.config.root_folder, out_unsigned)
@@ -1075,8 +1095,8 @@ class WhatsAppCloner:
                 ApkPackager.repack_exact_copy(
                     base_apk=base_apk_path,
                     unsigned_apk=out_unsigned,
-                    output_aligned=out_aligned,
-                    output_signed=out_signed,
+                    output_apk=out_apk,
+                    sign=self.sign_apk,
                     keystore=self.keystore,
                     keypass=self.keypass,
                     keyalias=self.keyalias

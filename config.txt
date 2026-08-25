@@ -15,7 +15,10 @@ ZIPALIGN_PATH=C:\Android\build-tools\35.0.0\zipalign.exe
 # Path to Android SDK apksigner (.bat, .jar, or executable)
 APKSIGNER_PATH=C:\Android\build-tools\35.0.0\apksigner.bat
 
-# Keystore configuration for signing cloned APKs
+# Auto-sign repacked APK with apksigner (default: false - outputs unsigned APK)
+AUTO_SIGN=false
+
+# Keystore configuration for signing cloned APKs (when --sign or AUTO_SIGN=true is used)
 KEYSTORE_PATH=towartz.jks
 KEYSTORE_PASS=pass:towartz123
 KEYSTORE_ALIAS=towartz
