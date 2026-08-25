@@ -823,17 +823,40 @@ class ToolConfig:
     def find_tool(cls, tool_key: str) -> Optional[str]:
         """
         Resolves tool path via:
-        1. config.txt (e.g. APKTOOL_PATH)
-        2. Environment variable (e.g. APKTOOL_PATH, ANDROID_HOME)
-        3. Dynamic Android SDK & OS path detection (Windows, Linux, macOS, Termux)
-        4. System PATH via shutil.which
+        1. Local project ./tools/ directory (e.g. tools/apktool.jar, tools/apksigner.jar)
+        2. config.txt (e.g. APKTOOL_PATH)
+        3. Environment variable (e.g. APKTOOL_PATH, ANDROID_HOME)
+        4. Dynamic Android SDK & OS path detection (Windows, Linux, macOS, Termux)
+        5. System PATH via shutil.which
         """
-        configured_path = cls.get(f"{tool_key}_PATH") or cls.get(tool_key)
-        if configured_path and os.path.exists(configured_path):
-            return configured_path
-            
         tool_name = tool_key.lower().replace("_path", "").replace("seven_zip", "7z")
-        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # 1. First priority: Check local project ./tools/ directory
+        local_tools_dir = os.path.join(script_dir, "tools")
+        local_candidates = {
+            "apktool": ["apktool.jar", "apktool_3.0.3.jar", "apktool"],
+            "apksigner": ["apksigner.jar", "apksigner.bat", "apksigner"],
+            "7z": ["7z.exe", "7z"],
+            "zipalign": ["zipalign.exe", "zipalign"],
+            "apkeditor": ["APKEditor.jar", "APKEditor-1.4.9.jar"],
+            "d8": ["d8.jar"]
+        }
+        for fname in local_candidates.get(tool_name, []):
+            local_p = os.path.join(local_tools_dir, fname)
+            if os.path.exists(local_p):
+                return local_p
+
+        # 2. Check config.txt / Environment variables
+        configured_path = cls.get(f"{tool_key}_PATH") or cls.get(tool_key)
+        if configured_path:
+            if not os.path.isabs(configured_path):
+                rel_p = os.path.join(script_dir, configured_path)
+                if os.path.exists(rel_p):
+                    return rel_p
+            if os.path.exists(configured_path):
+                return configured_path
+            
         android_home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
         sdk_candidates = []
         if android_home and os.path.isdir(android_home):
@@ -859,6 +882,7 @@ class ToolConfig:
                 "/data/data/com.termux/files/usr/bin/apktool"
             ],
             "zipalign": [
+                r"C:\Android\build-tools\37.0.0\zipalign.exe",
                 r"C:\Android\build-tools\35.0.0\zipalign.exe",
                 r"C:\Android\build-tools\34.0.0\zipalign.exe",
                 r"C:\Android\build-tools\33.0.0\zipalign.exe",
@@ -867,10 +891,11 @@ class ToolConfig:
                 "/data/data/com.termux/files/usr/bin/zipalign"
             ] + [os.path.join(d, "zipalign.exe" if os.name == 'nt' else "zipalign") for d in sdk_candidates],
             "apksigner": [
+                r"C:\Android\build-tools\37.0.0\apksigner.bat",
+                r"C:\Android\build-tools\37.0.0\lib\apksigner.jar",
                 r"C:\Android\build-tools\35.0.0\apksigner.bat",
-                r"C:\Android\build-tools\35.0.0\apksigner.jar",
+                r"C:\Android\build-tools\35.0.0\lib\apksigner.jar",
                 r"C:\Android\build-tools\34.0.0\apksigner.bat",
-                r"C:\Android\build-tools\33.0.0\apksigner.bat",
                 "/usr/bin/apksigner",
                 "/usr/local/bin/apksigner",
                 "/data/data/com.termux/files/usr/bin/apksigner"
@@ -1088,8 +1113,12 @@ class ApkPackager:
                     print(TerminalUI.colorize("  [5] Signing with apksigner (V1, V2, V3)...", TerminalUI.CYAN))
                     if os.path.exists(output_apk):
                         os.remove(output_apk)
-                    cmd_sign = [
-                        apksigner, 'sign',
+                    
+                    is_jar = apksigner.lower().endswith(".jar")
+                    base_cmd = ["java", "-jar", apksigner] if is_jar else [apksigner]
+                    
+                    cmd_sign = base_cmd + [
+                        'sign',
                         '--ks', keystore,
                         '--ks-pass', keypass,
                         '--ks-key-alias', keyalias,
@@ -1104,7 +1133,8 @@ class ApkPackager:
                     
                     # Verify
                     print(TerminalUI.colorize("  [6] Verifying final APK signature...", TerminalUI.CYAN))
-                    subprocess.run([apksigner, 'verify', output_apk], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                    cmd_verify = base_cmd + ['verify', output_apk]
+                    subprocess.run(cmd_verify, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
                     print(TerminalUI.colorize(f"\n[SUCCESS] Final signed APK ready at: {output_apk}", TerminalUI.BOLD + TerminalUI.GREEN))
                 else:
                     print(TerminalUI.colorize("  [!] apksigner or keystore not found. Outputting aligned unsigned APK.", TerminalUI.YELLOW))

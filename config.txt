@@ -4,7 +4,7 @@
 # Leave paths empty or commented out to automatically detect from Environment/PATH.
 
 # Path to Apktool (.jar or executable script)
-APKTOOL_PATH=C:\Android\JAR\apktool_3.0.3.jar
+APKTOOL_PATH=tools\apktool.jar
 
 # Path to 7-Zip executable (7z.exe on Windows or 7z on Linux/Termux)
 SEVEN_ZIP_PATH=C:\Windows\system32\7z.exe
@@ -12,8 +12,8 @@ SEVEN_ZIP_PATH=C:\Windows\system32\7z.exe
 # Path to Android SDK zipalign executable
 ZIPALIGN_PATH=C:\Android\build-tools\35.0.0\zipalign.exe
 
-# Path to Android SDK apksigner (.bat, .jar, or executable)
-APKSIGNER_PATH=C:\Android\build-tools\35.0.0\apksigner.bat
+# Path to Android SDK apksigner (.jar, .bat, or executable)
+APKSIGNER_PATH=tools\apksigner.jar
 
 # Auto-sign repacked APK with apksigner (default: false - outputs unsigned APK)
 AUTO_SIGN=false
