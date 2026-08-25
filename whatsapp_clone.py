@@ -210,12 +210,14 @@ DESCRIPTION:
     authorities, custom permissions, and resources in decompiled APK directories.
 
 USAGE:
-    python whatsapp_clone.py [folder_path] [options]
+    python whatsapp_clone.py [folder_or_apk_path] [options]
     python whatsapp_clone.py -h/--help
 
 ARGUMENTS:
-    folder                The root folder of the decompiled WhatsApp APK
-                          If not provided, you'll be prompted to enter it
+    folder_or_apk         The root folder of decompiled code OR a .apk file.
+                          If an APK file is provided, it is automatically decompiled,
+                          cloned, and repacked into a ready-to-sign cloned APK.
+                          If not provided, you'll be prompted interactively.
 
 OPTIONS:
     --whatsapp-type INT   Specify WhatsApp type:
@@ -238,9 +240,10 @@ OPTIONS:
                           (Only with --mode 3)
 
     --workers INT         Number of worker threads for parallel processing
-                          (Default: 8)
+                          (Default from config: 12)
 
     --build               Automatically recompile with Apktool and package final cloned APK
+                          (Enabled automatically if input is an APK file)
     --base-apk FILE       Path to original base.apk template for 1:1 direct-copy exact ZIP repack
     --out-apk FILE        Output path for final APK (default: <package>_ExactZip_cloned.apk)
     --sign                Sign the output APK with apksigner (Default: unsigned)
@@ -249,14 +252,14 @@ OPTIONS:
     -h, --help            Display this help message
 
 EXAMPLES:
-    # Auto-detect base and clone with custom package name
-    python whatsapp_clone.py ./decompiled_apk --mode 2 --package mywa --name MyWA
+    # 1-Click Fully Automated: Decompile base.apk, clone, and package output APK
+    python whatsapp_clone.py base.apk --mode 2 --package mywa --name MyWA
 
-    # Clone and automatically build & sign exact ZIP APK
+    # Clone already-decompiled folder and build unsigned exact ZIP APK
     python whatsapp_clone.py ./decompiled_apk --mode 2 --package mywa --name MyWA --build --base-apk base.apk
 
-    # Process WhatsApp Business
-    python whatsapp_clone.py ./decompiled_w4b --whatsapp-type 2 --mode 1
+    # Process WhatsApp Business APK
+    python whatsapp_clone.py w4b_base.apk --whatsapp-type 2 --mode 1
 
     # Run interactively (will guide you step-by-step with auto-detection)
     python whatsapp_clone.py
@@ -693,6 +696,31 @@ class ApkPackager:
         return ToolConfig.find_tool(tool_name)
 
     @staticmethod
+    def decompile_with_apktool(apk_path: str, output_folder: str, apktool_jar: Optional[str] = None) -> bool:
+        """Decompile an APK using Apktool."""
+        tool_path = apktool_jar or ApkPackager.find_tool("apktool")
+        if not tool_path or not os.path.exists(tool_path):
+            print(TerminalUI.colorize("  [!] Apktool not found. Please specify path in config.txt or CLI.", TerminalUI.RED))
+            return False
+            
+        print(TerminalUI.colorize(f"  [+] Decompiling APK ({os.path.basename(apk_path)}) with Apktool...", TerminalUI.CYAN))
+        if tool_path.lower().endswith(".jar"):
+            cmd = ["java", "-jar", tool_path, "d", "-f", apk_path, "-o", output_folder]
+        else:
+            cmd = [tool_path, "d", "-f", apk_path, "-o", output_folder]
+
+        try:
+            p = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            if p.returncode != 0:
+                print(TerminalUI.colorize(f"  [!] Apktool decompile failed:\n{p.stderr}", TerminalUI.RED))
+                return False
+            print(TerminalUI.colorize(f"  [✓] Decompiled successfully to: {os.path.basename(output_folder)}", TerminalUI.GREEN))
+            return True
+        except Exception as e:
+            print(TerminalUI.colorize(f"  [!] Failed to execute Apktool: {e}", TerminalUI.RED))
+            return False
+
+    @staticmethod
     def build_with_apktool(decompiled_folder: str, output_unsigned: str, apktool_jar: Optional[str] = None) -> bool:
         """Recompile decompiled folder into unsigned APK using Apktool."""
         tool_path = apktool_jar or ApkPackager.find_tool("apktool")
@@ -886,7 +914,7 @@ class WhatsAppCloner:
     
     def parse_arguments(self) -> bool:
         parser = argparse.ArgumentParser(description="WhatsApp Clone Tool v3.0.0", add_help=False)
-        parser.add_argument("folder", nargs="?", help="The root folder of the decompiled WhatsApp code")
+        parser.add_argument("folder", nargs="?", help="The root folder of decompiled code OR a .apk file")
         parser.add_argument(
             "--whatsapp-type", type=int, choices=[1, 2, 3], 
             help="WhatsApp type: 1 for WhatsApp, 2 for WhatsApp Business, 3 for Custom/Auto"
@@ -917,15 +945,33 @@ class WhatsAppCloner:
             show_help()
         
         if args.folder:
-            self.config.root_folder = os.path.abspath(args.folder)
-            self.config.detect_from_manifest()
+            target_path = os.path.abspath(args.folder)
+            if os.path.isfile(target_path) and target_path.lower().endswith(".apk"):
+                self.base_apk = target_path
+                self.build_apk = True
+                apk_stem = os.path.splitext(os.path.basename(target_path))[0]
+                decompiled_dir = os.path.join(os.path.dirname(target_path), f"decompiled_{apk_stem}")
+                self.config.root_folder = decompiled_dir
+                
+                manifest_check = os.path.join(decompiled_dir, "AndroidManifest.xml")
+                if not os.path.exists(manifest_check):
+                    decompiled = ApkPackager.decompile_with_apktool(self.base_apk, decompiled_dir)
+                    if not decompiled:
+                        print(TerminalUI.colorize("  [!] Decompilation failed. Aborting.", TerminalUI.RED))
+                        sys.exit(1)
+                self.config.detect_from_manifest()
+            else:
+                self.config.root_folder = target_path
+                self.config.detect_from_manifest()
         
         if args.workers:
             self.config.max_workers = args.workers
-        self.build_apk = args.build
+        if args.build:
+            self.build_apk = True
         if args.sign:
             self.sign_apk = True
-        self.base_apk = args.base_apk
+        if args.base_apk:
+            self.base_apk = args.base_apk
         self.out_apk = args.out_apk
         
         if args.keystore:
@@ -980,8 +1026,24 @@ class WhatsAppCloner:
     
     def setup_interactively(self) -> None:
         if not self.config.root_folder:
-            prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK", TerminalUI.CYAN)
-            self.config.root_folder = input(f"{prompt_str} (or Enter for current dir): ").strip() or os.getcwd()
+            prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK or APK file", TerminalUI.CYAN)
+            user_input = input(f"{prompt_str} (or Enter for current dir): ").strip() or os.getcwd()
+            target_path = os.path.abspath(user_input)
+            if os.path.isfile(target_path) and target_path.lower().endswith(".apk"):
+                self.base_apk = target_path
+                self.build_apk = True
+                apk_stem = os.path.splitext(os.path.basename(target_path))[0]
+                decompiled_dir = os.path.join(os.path.dirname(target_path), f"decompiled_{apk_stem}")
+                self.config.root_folder = decompiled_dir
+                
+                manifest_check = os.path.join(decompiled_dir, "AndroidManifest.xml")
+                if not os.path.exists(manifest_check):
+                    decompiled = ApkPackager.decompile_with_apktool(self.base_apk, decompiled_dir)
+                    if not decompiled:
+                        print(TerminalUI.colorize("  [!] Decompilation failed. Aborting.", TerminalUI.RED))
+                        sys.exit(1)
+            else:
+                self.config.root_folder = target_path
         
         self.config.root_folder = os.path.abspath(self.config.root_folder)
         detected_pkg, folder_name = self.config.detect_from_manifest()
