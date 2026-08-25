@@ -1328,11 +1328,20 @@ class ApkPackager:
                 shutil.rmtree(stage_dir)
             os.makedirs(stage_dir, exist_ok=True)
             
-            # Step 1: Extract updated DEX & AndroidManifest from unsigned APK
+            def should_update_entry(n: str) -> bool:
+                if n == 'AndroidManifest.xml' or n == 'resources.arsc':
+                    return True
+                if n.startswith('classes') and n.endswith('.dex'):
+                    return True
+                if n.startswith('res/'):
+                    return True
+                return False
+
+            # Step 1: Extract updated DEX, AndroidManifest, resources.arsc, and compiled res/ from unsigned APK
             update_files = []
             with zipfile.ZipFile(unsigned_apk, 'r') as zc:
                 for name in zc.namelist():
-                    if name == 'AndroidManifest.xml' or (name.startswith('classes') and name.endswith('.dex')):
+                    if should_update_entry(name):
                         zc.extract(name, stage_dir)
                         update_files.append(name)
             
@@ -1345,32 +1354,41 @@ class ApkPackager:
             shutil.copyfile(base_apk, temp_copy)
             
             if seven_zip:
-                # Remove old signature blocks using 7z
-                print(TerminalUI.colorize("  [2] Removing old signature files from copied APK...", TerminalUI.CYAN))
-                cmd_del = [seven_zip, 'd', '-tzip', temp_copy, 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'META-INF/*.EC', 'META-INF/MANIFEST.MF']
-                subprocess.run(cmd_del, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Remove old signature blocks, old manifest, old DEX, old resources.arsc, and old res/ from copied APK
+                print(TerminalUI.colorize("  [2] Removing old signature, bytecode & resource files from copied APK...", TerminalUI.CYAN))
+                cmd_del_sig = [seven_zip, 'd', '-tzip', temp_copy, 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'META-INF/*.EC', 'META-INF/MANIFEST.MF']
+                subprocess.run(cmd_del_sig, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
-                # In-place inject updated DEX & AndroidManifest
-                print(TerminalUI.colorize("  [3] In-place updating modified DEX and AndroidManifest into APK...", TerminalUI.CYAN))
-                subprocess.run([seven_zip, 'a', '-tzip', temp_copy, '*'], cwd=stage_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                cmd_del_res = [seven_zip, 'd', '-tzip', temp_copy, 'resources.arsc', 'res/*', 'classes*.dex', 'AndroidManifest.xml']
+                subprocess.run(cmd_del_res, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # In-place inject updated DEX, AndroidManifest, resources.arsc, and compiled res/
+                print(TerminalUI.colorize("  [3] In-place updating modified DEX, Manifest, and Resources into APK...", TerminalUI.CYAN))
+                subprocess.run([seven_zip, 'a', '-tzip', os.path.abspath(temp_copy), '*'], cwd=stage_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             else:
                 # Python fallback with metadata preservation
-                print(TerminalUI.colorize("  [2] In-place updating modified DEX and AndroidManifest (Python engine)...", TerminalUI.CYAN))
+                print(TerminalUI.colorize("  [2] In-place updating modified DEX, Manifest, and Resources (Python engine)...", TerminalUI.CYAN))
                 repack_unaligned = os.path.join(stage_root, "temp_py_repack.apk")
                 def is_sig(n):
                     u = n.upper()
                     return u.startswith('META-INF/') and (u.endswith('.SF') or u.endswith('.RSA') or u.endswith('.DSA') or u.endswith('.EC') or u == 'META-INF/MANIFEST.MF')
                 
                 with zipfile.ZipFile(unsigned_apk, 'r') as zc, zipfile.ZipFile(base_apk, 'r') as zb:
-                    cloned_data = {n: zc.read(n) for n in update_files}
                     with zipfile.ZipFile(repack_unaligned, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+                        # Write all untouched files from base (lib/, assets/, etc.)
                         for item in zb.infolist():
                             if is_sig(item.filename):
                                 continue
-                            if item.filename in cloned_data:
-                                zout.writestr(item, cloned_data[item.filename])
-                            else:
+                            if not should_update_entry(item.filename):
                                 zout.writestr(item, zb.read(item.filename))
+                        
+                        # Write all updated files from unsigned APK (classes*.dex, AndroidManifest.xml, resources.arsc, res/*)
+                        for item in zc.infolist():
+                            if is_sig(item.filename):
+                                continue
+                            if should_update_entry(item.filename):
+                                zout.writestr(item, zc.read(item.filename))
+                                
                 temp_copy = repack_unaligned
             
             shutil.rmtree(stage_dir, ignore_errors=True)
