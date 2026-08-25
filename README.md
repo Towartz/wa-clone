@@ -7,8 +7,8 @@
     <a href="https://github.com/Towartz/wa-clone"><img src="https://komarev.com/ghpvc/?username=Towartz-wa-clone&repo=wa-clone&color=blue&style=flat-square&label=Repository+Views" alt="Repository Views"></a>
     <a href="https://github.com/Towartz/wa-clone/stargazers"><img src="https://img.shields.io/github/stars/Towartz/wa-clone?style=flat-square&color=yellow" alt="GitHub Stars"></a>
     <a href="https://github.com/Towartz/wa-clone/network/members"><img src="https://img.shields.io/github/forks/Towartz/wa-clone?style=flat-square&color=orange" alt="GitHub Forks"></a>
-    <a href="https://github.com/Towartz/wa-clone/issues"><img src="https://img.shields.io/github/issues/Towartz/wa-clone?style=flat-square&color=red" alt="Open Issues"></a>
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.8+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.8+"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="MIT License"></a>
     <img src="https://img.shields.io/badge/Platform-Android%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform Support">
     <img src="https://img.shields.io/badge/Dependencies-0%20(Pure%20Python)-brightgreen?style=flat-square" alt="Zero Dependencies">
   </p>
