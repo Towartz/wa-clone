@@ -512,42 +512,191 @@ class XmlProcessor(FileProcessor):
             return False
 
 
-class ApkPackager:
-    """1:1 Direct-Copy Exact ZIP Repack & APK Signing Engine"""
+class ToolConfig:
+    """Manages configuration from config.txt, Environment variables, and OS auto-detection."""
+    
+    _config_cache: Optional[Dict[str, str]] = None
+    _config_file_path: Optional[str] = None
+    
+    @classmethod
+    def get_config_path(cls) -> str:
+        if cls._config_file_path:
+            return cls._config_file_path
+        
+        candidates = [
+            os.path.join(os.getcwd(), "config.txt"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.txt")
+        ]
+        for c in candidates:
+            if os.path.exists(c):
+                cls._config_file_path = c
+                return c
+                
+        cls._config_file_path = candidates[0]
+        return cls._config_file_path
 
-    @staticmethod
-    def find_tool(tool_name: str) -> Optional[str]:
+    @classmethod
+    def load(cls) -> Dict[str, str]:
+        if cls._config_cache is not None:
+            return cls._config_cache
+            
+        cfg = {}
+        cfg_file = cls.get_config_path()
+        
+        if os.path.exists(cfg_file):
+            try:
+                with open(cfg_file, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#') or line.startswith(';'):
+                            continue
+                        if '=' in line:
+                            key, val = line.split('=', 1)
+                            key = key.strip().upper()
+                            val = val.strip().strip('"').strip("'")
+                            if val:
+                                cfg[key] = val
+            except Exception:
+                pass
+        
+        cls._config_cache = cfg
+        return cfg
+
+    @classmethod
+    def get(cls, key: str, default: Optional[str] = None) -> Optional[str]:
+        cfg = cls.load()
+        key_upper = key.upper()
+        # 1. config.txt
+        if key_upper in cfg and cfg[key_upper]:
+            return cfg[key_upper]
+        # 2. Environment Variable
+        if key_upper in os.environ and os.environ[key_upper]:
+            return os.environ[key_upper]
+        return default
+
+    @classmethod
+    def find_tool(cls, tool_key: str) -> Optional[str]:
+        """
+        Resolves tool path via:
+        1. config.txt (e.g. APKTOOL_PATH)
+        2. Environment variable (e.g. APKTOOL_PATH, ANDROID_HOME)
+        3. Dynamic Android SDK & OS path detection (Windows, Linux, macOS, Termux)
+        4. System PATH via shutil.which
+        """
+        configured_path = cls.get(f"{tool_key}_PATH") or cls.get(tool_key)
+        if configured_path and os.path.exists(configured_path):
+            return configured_path
+            
+        tool_name = tool_key.lower().replace("_path", "").replace("seven_zip", "7z")
+        
+        android_home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+        sdk_candidates = []
+        if android_home and os.path.isdir(android_home):
+            build_tools_dir = os.path.join(android_home, "build-tools")
+            if os.path.isdir(build_tools_dir):
+                for version_dir in sorted(os.listdir(build_tools_dir), reverse=True):
+                    sdk_candidates.append(os.path.join(build_tools_dir, version_dir))
+
         common_locations = {
-            "7z": [r"C:\Windows\system32\7z.exe", r"C:\Program Files\7-Zip\7z.exe"],
+            "7z": [
+                r"C:\Windows\system32\7z.exe",
+                r"C:\Program Files\7-Zip\7z.exe",
+                r"C:\Program Files (x86)\7-Zip\7z.exe",
+                "/usr/bin/7z",
+                "/usr/local/bin/7z",
+                "/data/data/com.termux/files/usr/bin/7z"
+            ],
             "apktool": [
                 r"C:\Android\JAR\apktool_3.0.3.jar",
-                r"C:\Android\JAR\apktool.jar"
+                r"C:\Android\JAR\apktool.jar",
+                "/usr/local/bin/apktool",
+                "/usr/bin/apktool",
+                "/data/data/com.termux/files/usr/bin/apktool"
             ],
             "zipalign": [
                 r"C:\Android\build-tools\35.0.0\zipalign.exe",
-                r"C:\Android\build-tools\34.0.0\zipalign.exe"
-            ],
+                r"C:\Android\build-tools\34.0.0\zipalign.exe",
+                r"C:\Android\build-tools\33.0.0\zipalign.exe",
+                "/usr/bin/zipalign",
+                "/usr/local/bin/zipalign",
+                "/data/data/com.termux/files/usr/bin/zipalign"
+            ] + [os.path.join(d, "zipalign.exe" if os.name == 'nt' else "zipalign") for d in sdk_candidates],
             "apksigner": [
                 r"C:\Android\build-tools\35.0.0\apksigner.bat",
-                r"C:\Android\build-tools\34.0.0\apksigner.bat"
-            ]
+                r"C:\Android\build-tools\35.0.0\apksigner.jar",
+                r"C:\Android\build-tools\34.0.0\apksigner.bat",
+                r"C:\Android\build-tools\33.0.0\apksigner.bat",
+                "/usr/bin/apksigner",
+                "/usr/local/bin/apksigner",
+                "/data/data/com.termux/files/usr/bin/apksigner"
+            ] + [os.path.join(d, "apksigner.bat" if os.name == 'nt' else "apksigner") for d in sdk_candidates]
         }
+        
         for candidate in common_locations.get(tool_name, []):
             if os.path.exists(candidate):
                 return candidate
-
+                
         path_tool = shutil.which(tool_name)
         if path_tool:
             return path_tool
             
         return None
 
+    @classmethod
+    def ensure_default_config_file(cls) -> None:
+        """Generates a default config.txt template if not present."""
+        cfg_path = cls.get_config_path()
+        if not os.path.exists(cfg_path):
+            apktool = cls.find_tool("apktool") or ""
+            seven_zip = cls.find_tool("7z") or ""
+            zipalign = cls.find_tool("zipalign") or ""
+            apksigner = cls.find_tool("apksigner") or ""
+            
+            content = f"""# ==============================================================================
+# WhatsApp Clone Tool - External Build Tools Configuration
+# ==============================================================================
+# Leave paths empty or commented out to automatically detect from Environment/PATH.
+
+# Path to Apktool (.jar or executable script)
+APKTOOL_PATH={apktool}
+
+# Path to 7-Zip executable (7z.exe on Windows or 7z on Linux/Termux)
+SEVEN_ZIP_PATH={seven_zip}
+
+# Path to Android SDK zipalign executable
+ZIPALIGN_PATH={zipalign}
+
+# Path to Android SDK apksigner (.bat, .jar, or executable)
+APKSIGNER_PATH={apksigner}
+
+# Keystore configuration for signing cloned APKs
+KEYSTORE_PATH=towartz.jks
+KEYSTORE_PASS=pass:towartz123
+KEYSTORE_ALIAS=towartz
+
+# Default worker thread count for parallel Smali/XML processing
+DEFAULT_WORKERS=12
+"""
+            try:
+                with open(cfg_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            except Exception:
+                pass
+
+
+class ApkPackager:
+    """1:1 Direct-Copy Exact ZIP Repack & APK Signing Engine"""
+
+    @staticmethod
+    def find_tool(tool_name: str) -> Optional[str]:
+        return ToolConfig.find_tool(tool_name)
+
     @staticmethod
     def build_with_apktool(decompiled_folder: str, output_unsigned: str, apktool_jar: Optional[str] = None) -> bool:
         """Recompile decompiled folder into unsigned APK using Apktool."""
         tool_path = apktool_jar or ApkPackager.find_tool("apktool")
         if not tool_path or not os.path.exists(tool_path):
-            print(TerminalUI.colorize("  [!] Apktool not found. Please specify path.", TerminalUI.RED))
+            print(TerminalUI.colorize("  [!] Apktool not found. Please specify path in config.txt or CLI.", TerminalUI.RED))
             return False
             
         print(TerminalUI.colorize(f"  [+] Recompiling with Apktool: {os.path.basename(tool_path)}...", TerminalUI.CYAN))
@@ -574,13 +723,16 @@ class ApkPackager:
         output_aligned: str, 
         output_signed: str, 
         keystore: Optional[str] = None, 
-        keypass: str = "pass:towartz123", 
-        keyalias: str = "towartz"
+        keypass: Optional[str] = None, 
+        keyalias: Optional[str] = None
     ) -> bool:
         """
         Direct 1:1 bitwise copy of base.apk, in-place removal of old signature blocks,
         in-place injection of updated DEX & manifest, 4-byte zipalign, and V1/V2/V3 signing.
         """
+        keypass = keypass or ToolConfig.get("KEYSTORE_PASS", "pass:towartz123")
+        keyalias = keyalias or ToolConfig.get("KEYSTORE_ALIAS", "towartz")
+        
         try:
             seven_zip = ApkPackager.find_tool("7z")
             zipalign = ApkPackager.find_tool("zipalign")
@@ -682,13 +834,20 @@ class ApkPackager:
 class WhatsAppCloner:
     
     def __init__(self):
+        ToolConfig.ensure_default_config_file()
         self.config = WhatsAppCloneConfig()
         self.build_apk = False
         self.base_apk = None
         self.out_apk = None
-        self.keystore = None
-        self.keypass = "pass:towartz123"
-        self.keyalias = "towartz"
+        self.keystore = ToolConfig.get("KEYSTORE_PATH", "towartz.jks")
+        self.keypass = ToolConfig.get("KEYSTORE_PASS", "pass:towartz123")
+        self.keyalias = ToolConfig.get("KEYSTORE_ALIAS", "towartz")
+        
+        default_workers_str = ToolConfig.get("DEFAULT_WORKERS", "12")
+        try:
+            self.config.max_workers = int(default_workers_str)
+        except ValueError:
+            self.config.max_workers = 12
         
     def display_intro(self):
         title = "WhatsApp Clone Tool"
@@ -700,6 +859,7 @@ class WhatsAppCloner:
             TerminalUI.colorize("[+] Remaps all 11+ Content Provider authorities (Prevents Conflicting Provider)", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Remaps all custom permissions & multi-DEX smali folders", TerminalUI.CYAN),
             TerminalUI.colorize("[+] 1:1 Direct-Copy Exact ZIP Repack & Signing Engine", TerminalUI.CYAN),
+            TerminalUI.colorize("[+] Dynamic tool path auto-detection & config.txt support", TerminalUI.CYAN),
             "",
             TerminalUI.colorize("Author: YouTube@66XZD", TerminalUI.DIM)
         ]
@@ -721,15 +881,15 @@ class WhatsAppCloner:
         parser.add_argument("--name", help="New storage folder name (e.g. 'MyWhatsApp')")
         parser.add_argument("--search-pattern", help="Custom search pattern for base package (Mode 3 only)")
         parser.add_argument(
-            "--workers", type=int, default=8,
-            help="Number of worker threads for parallel processing (Default: 8)"
+            "--workers", type=int, default=None,
+            help=f"Number of worker threads for parallel processing (Default from config: {self.config.max_workers})"
         )
         parser.add_argument("--build", action="store_true", help="Automatically build & repack final cloned APK")
         parser.add_argument("--base-apk", help="Path to base.apk template for 1:1 direct-copy repack")
         parser.add_argument("--out-apk", help="Output path for final signed APK")
-        parser.add_argument("--keystore", help="Path to keystore .jks for signing")
-        parser.add_argument("--key-pass", default="pass:towartz123", help="Keystore password (default: pass:towartz123)")
-        parser.add_argument("--key-alias", default="towartz", help="Keystore alias (default: towartz)")
+        parser.add_argument("--keystore", help=f"Path to keystore .jks for signing (Default: {self.keystore})")
+        parser.add_argument("--key-pass", help="Keystore password (default from config)")
+        parser.add_argument("--key-alias", help="Keystore alias (default from config)")
         parser.add_argument("-h", "--help", action="store_true", help="Show help message and exit")
         
         args = parser.parse_args()
@@ -741,13 +901,23 @@ class WhatsAppCloner:
             self.config.root_folder = os.path.abspath(args.folder)
             self.config.detect_from_manifest()
         
-        self.config.max_workers = args.workers or 8
+        if args.workers:
+            self.config.max_workers = args.workers
         self.build_apk = args.build
         self.base_apk = args.base_apk
         self.out_apk = args.out_apk
-        self.keystore = args.keystore or (os.path.join(os.path.dirname(self.config.root_folder) if self.config.root_folder else ".", "towartz.jks"))
-        self.keypass = args.key_pass
-        self.keyalias = args.key_alias
+        
+        if args.keystore:
+            self.keystore = args.keystore
+        elif not os.path.isabs(self.keystore) and self.config.root_folder:
+            parent_ks = os.path.join(os.path.dirname(self.config.root_folder), self.keystore)
+            if os.path.exists(parent_ks):
+                self.keystore = parent_ks
+                
+        if args.key_pass:
+            self.keypass = args.key_pass
+        if args.key_alias:
+            self.keyalias = args.key_alias
         
         if args.folder and args.mode:
             self.setup_from_args(args)
