@@ -200,10 +200,10 @@ External tools and default options can be configured in `config.txt`:
 # Paths to tool binaries (defaults to ./tools/ JARs)
 APKTOOL_PATH=tools\apktool.jar
 APKSIGNER_PATH=tools\apksigner.jar
-SEVEN_ZIP_PATH=C:\Windows\system32\7z.exe
 ZIPALIGN_PATH=C:\Android\build-tools\35.0.0\zipalign.exe
 
-# Output and signing preferences
+# Output and runtime preferences
+DECOMPILED_DIR=decompiled_base
 AUTO_SIGN=false
 OUTPUT_DIR=dist
 AUTO_CLEAN_BUILD=true

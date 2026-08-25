@@ -6,9 +6,6 @@
 # Path to Apktool (.jar or executable script)
 APKTOOL_PATH=tools\apktool.jar
 
-# Path to 7-Zip executable (7z.exe on Windows or 7z on Linux/Termux)
-SEVEN_ZIP_PATH=C:\Windows\system32\7z.exe
-
 # Path to Android SDK zipalign executable
 ZIPALIGN_PATH=C:\Android\build-tools\35.0.0\zipalign.exe
 

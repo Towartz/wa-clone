@@ -1317,18 +1317,24 @@ class ApkPackager:
         keyalias = keyalias or ToolConfig.get("KEYSTORE_ALIAS", "towartz")
         
         try:
-            seven_zip = ApkPackager.find_tool("7z")
             zipalign = ApkPackager.find_tool("zipalign")
             apksigner = ApkPackager.find_tool("apksigner")
             
             stage_root = staging_dir or os.path.dirname(unsigned_apk) or "."
             os.makedirs(stage_root, exist_ok=True)
-            stage_dir = os.path.join(stage_root, "stage_update")
-            if os.path.exists(stage_dir):
-                shutil.rmtree(stage_dir)
-            os.makedirs(stage_dir, exist_ok=True)
             
-            def should_update_entry(n: str) -> bool:
+            temp_copy = os.path.join(stage_root, "temp_direct_copy.apk")
+            if os.path.exists(temp_copy):
+                os.remove(temp_copy)
+                
+            def is_sig(n: str) -> bool:
+                u = n.upper()
+                return u.startswith('META-INF/') and (
+                    u.endswith('.SF') or u.endswith('.RSA') or u.endswith('.DSA') or 
+                    u.endswith('.EC') or u == 'META-INF/MANIFEST.MF'
+                )
+
+            def should_take_from_cloned(n: str) -> bool:
                 if n == 'AndroidManifest.xml' or n == 'resources.arsc':
                     return True
                 if n.startswith('classes') and n.endswith('.dex'):
@@ -1337,61 +1343,35 @@ class ApkPackager:
                     return True
                 return False
 
-            # Step 1: Extract updated DEX, AndroidManifest, resources.arsc, and compiled res/ from unsigned APK
-            update_files = []
-            with zipfile.ZipFile(unsigned_apk, 'r') as zc:
-                for name in zc.namelist():
-                    if should_update_entry(name):
-                        zc.extract(name, stage_dir)
-                        update_files.append(name)
+            # Step 1 & 2: Pure zero-dependency Python exact streaming repack
+            print(TerminalUI.colorize(f"  [1] 1:1 Direct-copying base archive ({os.path.basename(base_apk)})...", TerminalUI.CYAN))
+            print(TerminalUI.colorize("  [2] In-place streaming modified DEX, Manifest, and Resources into APK...", TerminalUI.CYAN))
             
-            temp_copy = os.path.join(stage_root, "temp_direct_copy.apk")
-            if os.path.exists(temp_copy):
-                os.remove(temp_copy)
-            
-            # Step 2: 1:1 direct bitwise copy of base.apk
-            print(TerminalUI.colorize(f"  [1] 1:1 Copying base archive ({os.path.basename(base_apk)})...", TerminalUI.CYAN))
-            shutil.copyfile(base_apk, temp_copy)
-            
-            if seven_zip:
-                # Remove old signature blocks, old manifest, old DEX, old resources.arsc, and old res/ from copied APK
-                print(TerminalUI.colorize("  [2] Removing old signature, bytecode & resource files from copied APK...", TerminalUI.CYAN))
-                cmd_del_sig = [seven_zip, 'd', '-tzip', temp_copy, 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'META-INF/*.EC', 'META-INF/MANIFEST.MF']
-                subprocess.run(cmd_del_sig, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                cmd_del_res = [seven_zip, 'd', '-tzip', temp_copy, 'resources.arsc', 'res/*', 'classes*.dex', 'AndroidManifest.xml']
-                subprocess.run(cmd_del_res, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                # In-place inject updated DEX, AndroidManifest, resources.arsc, and compiled res/
-                print(TerminalUI.colorize("  [3] In-place updating modified DEX, Manifest, and Resources into APK...", TerminalUI.CYAN))
-                subprocess.run([seven_zip, 'a', '-tzip', os.path.abspath(temp_copy), '*'], cwd=stage_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            else:
-                # Python fallback with metadata preservation
-                print(TerminalUI.colorize("  [2] In-place updating modified DEX, Manifest, and Resources (Python engine)...", TerminalUI.CYAN))
-                repack_unaligned = os.path.join(stage_root, "temp_py_repack.apk")
-                def is_sig(n):
-                    u = n.upper()
-                    return u.startswith('META-INF/') and (u.endswith('.SF') or u.endswith('.RSA') or u.endswith('.DSA') or u.endswith('.EC') or u == 'META-INF/MANIFEST.MF')
-                
-                with zipfile.ZipFile(unsigned_apk, 'r') as zc, zipfile.ZipFile(base_apk, 'r') as zb:
-                    with zipfile.ZipFile(repack_unaligned, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
-                        # Write all untouched files from base (lib/, assets/, etc.)
-                        for item in zb.infolist():
-                            if is_sig(item.filename):
-                                continue
-                            if not should_update_entry(item.filename):
-                                zout.writestr(item, zb.read(item.filename))
-                        
-                        # Write all updated files from unsigned APK (classes*.dex, AndroidManifest.xml, resources.arsc, res/*)
-                        for item in zc.infolist():
-                            if is_sig(item.filename):
-                                continue
-                            if should_update_entry(item.filename):
-                                zout.writestr(item, zc.read(item.filename))
-                                
-                temp_copy = repack_unaligned
-            
-            shutil.rmtree(stage_dir, ignore_errors=True)
+            with zipfile.ZipFile(unsigned_apk, 'r') as zc, zipfile.ZipFile(base_apk, 'r') as zb:
+                with zipfile.ZipFile(temp_copy, 'w') as zout:
+                    # 1. Untouched entries from base (lib/, assets/, etc.) preserving original compress_type & metadata
+                    for item in zb.infolist():
+                        if is_sig(item.filename):
+                            continue
+                        if not should_take_from_cloned(item.filename):
+                            data = zb.read(item.filename)
+                            zinfo = zipfile.ZipInfo(item.filename)
+                            zinfo.compress_type = item.compress_type
+                            zinfo.date_time = item.date_time
+                            zinfo.external_attr = item.external_attr
+                            zout.writestr(zinfo, data)
+                    
+                    # 2. Updated entries from unsigned_apk (classes*.dex, AndroidManifest.xml, resources.arsc, res/*)
+                    for item in zc.infolist():
+                        if is_sig(item.filename):
+                            continue
+                        if should_take_from_cloned(item.filename):
+                            data = zc.read(item.filename)
+                            zinfo = zipfile.ZipInfo(item.filename)
+                            zinfo.compress_type = item.compress_type
+                            zinfo.date_time = item.date_time
+                            zinfo.external_attr = item.external_attr
+                            zout.writestr(zinfo, data)
             
             # Step 3: Zipalign 4-byte
             temp_aligned = os.path.join(stage_root, "temp_aligned.apk")
@@ -1404,7 +1384,7 @@ class ApkPackager:
                 os.remove(target_aligned)
                 
             if zipalign:
-                print(TerminalUI.colorize("  [4] Running 4-byte zipalign...", TerminalUI.CYAN))
+                print(TerminalUI.colorize("  [3] Running 4-byte zipalign...", TerminalUI.CYAN))
                 subprocess.run([zipalign, '-f', '-p', '4', temp_copy, target_aligned], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             else:
                 shutil.copyfile(temp_copy, target_aligned)
