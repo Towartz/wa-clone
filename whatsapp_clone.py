@@ -451,9 +451,10 @@ USAGE:
     python whatsapp_clone.py -h/--help
 
 ARGUMENTS:
-    folder_or_apk         The root folder of decompiled code OR a .apk file.
-                          If an APK file is provided, it is automatically decompiled,
-                          cloned, and repacked into a ready-to-sign cloned APK.
+    folder_or_apk         The root folder of decompiled code, a .apk file, OR a split
+                          bundle (.apkm, .xapk, .apks).
+                          If an APK or split bundle is provided, it is automatically
+                          merged, decompiled, cloned, and repacked into a ready APK.
                           If not provided, you'll be prompted interactively.
 
 OPTIONS:
@@ -480,6 +481,7 @@ OPTIONS:
     --build               Automatically recompile with Apktool and package final cloned APK
                           (Enabled automatically if input is an APK file)
     --build-only          Skip smali/XML cloning and build/repack current decompiled folder directly
+    --merge-only          Merge .apkm / .xapk / .apks split bundle into standalone APK and exit
     --base-apk FILE       Path to original base.apk template for 1:1 direct-copy exact ZIP repack
     --out-dir DIR         Directory for output APKs (Default from config: dist)
     --out-apk FILE        Output path for final APK (Default: <out-dir>/<package>_ExactZip_cloned.apk)
@@ -494,6 +496,12 @@ OPTIONS:
     -h, --help            Display this help message
 
 EXAMPLES:
+    # 1-Click Split APK Bundle: Auto-merge .apkm, decompile, clone, and repack
+    python whatsapp_clone.py WhatsApp.apkm --mode 2 --package mywa --name MyWA
+
+    # Merge .apkm / .xapk / .apks bundle into standalone APK only
+    python whatsapp_clone.py WhatsApp.apkm --merge-only
+
     # 1-Click Fully Automated: Decompile base.apk, clone, and package output into dist/
     python whatsapp_clone.py base.apk --mode 2 --package mywa --name MyWA
 
@@ -1183,11 +1191,62 @@ class ToolUpdater:
 
 
 class ApkPackager:
-    """1:1 Direct-Copy Exact ZIP Repack & APK Signing Engine"""
+    """1:1 Direct-Copy Exact ZIP Repack, Bundle Merge & APK Signing Engine"""
 
     @staticmethod
     def find_tool(tool_name: str) -> Optional[str]:
         return ToolConfig.find_tool(tool_name)
+
+    @staticmethod
+    def is_split_bundle(file_path: str) -> bool:
+        """Checks if a path is a split APK bundle (.apkm, .xapk, .apks, or directory with splits)."""
+        if not file_path:
+            return False
+        if os.path.isfile(file_path):
+            ext = os.path.splitext(file_path)[1].lower()
+            return ext in (".apkm", ".xapk", ".apks")
+        elif os.path.isdir(file_path):
+            try:
+                apks = [f for f in os.listdir(file_path) if f.lower().endswith(".apk")]
+                return len(apks) > 1 or any(f.startswith("split_") for f in apks)
+            except Exception:
+                return False
+        return False
+
+    @staticmethod
+    def merge_split_apk(input_bundle: str, output_apk: str, apkeditor_jar: Optional[str] = None) -> bool:
+        """Merges .apkm, .xapk, .apks or split APK directory into a unified standalone APK using APKEditor."""
+        tool_path = apkeditor_jar or ApkPackager.find_tool("apkeditor")
+        if not tool_path or not os.path.exists(tool_path):
+            print(TerminalUI.colorize("  [!] APKEditor.jar not found. Cannot merge split APK.", TerminalUI.RED))
+            return False
+
+        parent_dir = os.path.dirname(os.path.abspath(output_apk))
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        if os.path.exists(output_apk):
+            try:
+                os.remove(output_apk)
+            except Exception:
+                pass
+
+        print(TerminalUI.colorize(f"  [+] Merging split APK bundle ({os.path.basename(input_bundle)}) with APKEditor...", TerminalUI.CYAN))
+        if tool_path.lower().endswith(".jar"):
+            cmd = ["java", "-jar", tool_path, "m", "-i", input_bundle, "-o", output_apk, "-f", "-clean-meta"]
+        else:
+            cmd = [tool_path, "m", "-i", input_bundle, "-o", output_apk, "-f", "-clean-meta"]
+
+        try:
+            p = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            if p.returncode != 0 or not os.path.exists(output_apk) or os.path.getsize(output_apk) < 1024:
+                print(TerminalUI.colorize(f"  [!] APKEditor merge failed:\n{p.stderr}", TerminalUI.RED))
+                return False
+            size_mb = os.path.getsize(output_apk) / (1024 * 1024)
+            print(TerminalUI.colorize(f"  [✓] Split bundle merged successfully into standalone APK ({size_mb:.1f} MB)", TerminalUI.GREEN))
+            return True
+        except Exception as e:
+            print(TerminalUI.colorize(f"  [!] Failed to execute APKEditor: {e}", TerminalUI.RED))
+            return False
 
     @staticmethod
     def decompile_with_apktool(apk_path: str, output_folder: str, apktool_jar: Optional[str] = None) -> bool:
@@ -1386,6 +1445,7 @@ class WhatsAppCloner:
         self.build_apk = False
         self.sign_apk = False
         self.skip_cloning = False
+        self.merge_only = False
         self.base_apk = None
         self.out_apk = None
         self.out_dir = ToolConfig.get("OUTPUT_DIR", "dist")
@@ -1413,6 +1473,7 @@ class WhatsAppCloner:
             TerminalUI.colorize("[+] Remaps all 11+ Content Provider authorities (Prevents Conflicting Provider)", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Remaps all custom permissions & multi-DEX smali folders", TerminalUI.CYAN),
             TerminalUI.colorize("[+] 1:1 Direct-Copy Exact ZIP Repack Engine (Default: Unsigned)", TerminalUI.CYAN),
+            TerminalUI.colorize("[+] Auto-merges split APK bundles (.apkm, .xapk, .apks) via APKEditor", TerminalUI.CYAN),
             TerminalUI.colorize("[+] Dynamic tool path auto-detection & config.txt support", TerminalUI.CYAN),
             "",
             TerminalUI.colorize("Author: YouTube@66XZD", TerminalUI.DIM)
@@ -1422,7 +1483,7 @@ class WhatsAppCloner:
     
     def parse_arguments(self) -> bool:
         parser = argparse.ArgumentParser(description="WhatsApp Clone Tool v3.0.0", add_help=False)
-        parser.add_argument("folder", nargs="?", help="The root folder of decompiled code OR a .apk file")
+        parser.add_argument("folder", nargs="?", help="The root folder of decompiled code, a .apk file, OR a split bundle (.apkm, .xapk, .apks)")
         parser.add_argument(
             "--whatsapp-type", type=int, choices=[1, 2, 3], 
             help="WhatsApp type: 1 for WhatsApp, 2 for WhatsApp Business, 3 for Custom/Auto"
@@ -1440,6 +1501,7 @@ class WhatsAppCloner:
         )
         parser.add_argument("--build", action="store_true", help="Automatically build & repack final cloned APK")
         parser.add_argument("--build-only", "--skip-clone", action="store_true", help="Skip smali/XML cloning and build/repack current decompiled folder directly")
+        parser.add_argument("--merge-only", action="store_true", help="Merge .apkm/.xapk/.apks bundle into standalone APK and exit")
         parser.add_argument("--base-apk", help="Path to base.apk template for 1:1 direct-copy repack")
         parser.add_argument("--out-dir", help=f"Directory for output APKs (Default: {self.out_dir})")
         parser.add_argument("--out-apk", help="Output path for final APK (Default: <out-dir>/<package>_ExactZip_cloned.apk)")
@@ -1465,9 +1527,30 @@ class WhatsAppCloner:
         if args.update_tools:
             self.check_and_update_tools(auto_download=True)
             sys.exit(0)
+            
+        if args.merge_only:
+            self.merge_only = True
         
         if args.folder:
             target_path = os.path.abspath(args.folder)
+            
+            if ApkPackager.is_split_bundle(target_path):
+                bundle_stem = os.path.splitext(os.path.basename(target_path))[0]
+                merged_apk = os.path.join(os.path.dirname(target_path), f"merged_{bundle_stem}.apk")
+                if self.merge_only:
+                    merged_out = self.out_apk or os.path.join(self.out_dir, f"{bundle_stem}_merged.apk")
+                    success = ApkPackager.merge_split_apk(target_path, merged_out)
+                    if success:
+                        print(TerminalUI.colorize(f"\n[SUCCESS] Standalone merged APK created at: {merged_out}\n", TerminalUI.BOLD + TerminalUI.GREEN))
+                    sys.exit(0 if success else 1)
+                else:
+                    if not os.path.exists(merged_apk) or args.clean:
+                        merged = ApkPackager.merge_split_apk(target_path, merged_apk)
+                        if not merged:
+                            print(TerminalUI.colorize("  [!] Bundle merge failed. Aborting.", TerminalUI.RED))
+                            sys.exit(1)
+                    target_path = merged_apk
+            
             if os.path.isfile(target_path) and target_path.lower().endswith(".apk"):
                 self.base_apk = target_path
                 self.build_apk = True
@@ -1563,22 +1646,27 @@ class WhatsAppCloner:
     
     def find_local_candidates(self) -> List[Tuple[str, str, str]]:
         """
-        Scans current directory for candidate APK files and decompiled folders.
+        Scans current directory for candidate APK files, split bundles, and decompiled folders.
         Returns list of (absolute_path, type_label, info_str).
         """
         candidates = []
         cwd = os.getcwd()
         
-        # 1. Look for APK files in current directory
+        # 1. Look for APK and Split bundle files in current directory
         try:
             for f in sorted(os.listdir(cwd)):
                 full_path = os.path.join(cwd, f)
-                if os.path.isfile(full_path) and f.lower().endswith(".apk"):
+                if os.path.isfile(full_path):
                     f_lower = f.lower()
-                    if any(tag in f_lower for tag in ("cloned", "unsigned", "unaligned", "aligned", "directcopy", "temp_")):
-                        continue
-                    size_mb = os.path.getsize(full_path) / (1024 * 1024)
-                    candidates.append((full_path, "APK File", f"{size_mb:.1f} MB"))
+                    if f_lower.endswith(".apk"):
+                        if any(tag in f_lower for tag in ("cloned", "unsigned", "unaligned", "aligned", "directcopy", "temp_")):
+                            continue
+                        size_mb = os.path.getsize(full_path) / (1024 * 1024)
+                        candidates.append((full_path, "APK File", f"{size_mb:.1f} MB"))
+                    elif f_lower.endswith((".apkm", ".xapk", ".apks")):
+                        ext_name = os.path.splitext(f)[1].upper().lstrip('.')
+                        size_mb = os.path.getsize(full_path) / (1024 * 1024)
+                        candidates.append((full_path, f"{ext_name} Bundle", f"{size_mb:.1f} MB (Auto-Merge)"))
         except Exception:
             pass
             
@@ -1638,7 +1726,7 @@ class WhatsAppCloner:
             if sel < len(candidates):
                 selected_path = candidates[sel][0]
             elif sel == len(candidates):
-                prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK or APK file", TerminalUI.CYAN)
+                prompt_str = TerminalUI.colorize("Enter root folder path of decompiled APK, APK file, or split bundle", TerminalUI.CYAN)
                 user_input = input(f"{prompt_str} (or Enter for current dir): ").strip() or os.getcwd()
                 selected_path = os.path.abspath(user_input)
             elif sel == len(candidates) + 1:
@@ -1646,6 +1734,34 @@ class WhatsAppCloner:
                 continue
                 
             target_path = os.path.abspath(selected_path)
+            
+            if ApkPackager.is_split_bundle(target_path):
+                bundle_stem = os.path.splitext(os.path.basename(target_path))[0]
+                merged_apk = os.path.join(os.path.dirname(target_path), f"merged_{bundle_stem}.apk")
+                
+                bundle_action = InteractiveMenu.select(
+                    f"Split Bundle Detected: {os.path.basename(target_path)}",
+                    [
+                        ("Merge & Clone (Full Pipeline)", "Merge split configs, decompile, and clone WhatsApp"),
+                        ("Merge Only to Standalone APK", f"Merge bundle and save standalone APK to {self.out_dir}/")
+                    ],
+                    default_index=0
+                )
+                
+                if bundle_action == 1:
+                    out_merged = os.path.join(self.out_dir, f"{bundle_stem}_merged.apk")
+                    success = ApkPackager.merge_split_apk(target_path, out_merged)
+                    if success:
+                        print(TerminalUI.colorize(f"\n[SUCCESS] Standalone merged APK created at: {out_merged}\n", TerminalUI.BOLD + TerminalUI.GREEN))
+                    sys.exit(0 if success else 1)
+                else:
+                    if not os.path.exists(merged_apk):
+                        merged = ApkPackager.merge_split_apk(target_path, merged_apk)
+                        if not merged:
+                            print(TerminalUI.colorize("  [!] Bundle merge failed. Aborting.", TerminalUI.RED))
+                            sys.exit(1)
+                    target_path = merged_apk
+            
             if os.path.isfile(target_path) and target_path.lower().endswith(".apk"):
                 self.base_apk = target_path
                 self.build_apk = True
