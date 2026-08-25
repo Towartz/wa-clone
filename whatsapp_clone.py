@@ -474,24 +474,24 @@ OPTIONS:
     --search-pattern STRING Custom base search pattern (e.g. 'com.whatsapp' or 'com.whatsapp.litex')
                           (Only with --mode 3)
 
-    --workers INT         Number of worker threads for parallel processing
-                          (Default from config: 12)
-
     --build               Automatically recompile with Apktool and package final cloned APK
                           (Enabled automatically if input is an APK file)
     --base-apk FILE       Path to original base.apk template for 1:1 direct-copy exact ZIP repack
-    --out-apk FILE        Output path for final APK (default: <package>_ExactZip_cloned.apk)
+    --out-dir DIR         Directory for output APKs (Default from config: dist)
+    --out-apk FILE        Output path for final APK (Default: <out-dir>/<package>_ExactZip_cloned.apk)
+    --no-clean            Keep intermediate build and unsigned APK files in .build/
     --sign                Sign the output APK with apksigner (Default: unsigned)
     --keystore FILE       Path to .jks keystore for signing (default: auto-detected)
+    --clean               Force clean re-decompilation if decompiled folder already exists
 
     -h, --help            Display this help message
 
 EXAMPLES:
-    # 1-Click Fully Automated: Decompile base.apk, clone, and package output APK
+    # 1-Click Fully Automated: Decompile base.apk, clone, and package output into dist/
     python whatsapp_clone.py base.apk --mode 2 --package mywa --name MyWA
 
-    # Clone already-decompiled folder and build unsigned exact ZIP APK
-    python whatsapp_clone.py ./decompiled_apk --mode 2 --package mywa --name MyWA --build --base-apk base.apk
+    # Clone already-decompiled folder and build unsigned exact ZIP APK into custom folder
+    python whatsapp_clone.py ./decompiled_apk --mode 2 --package mywa --name MyWA --build --base-apk base.apk --out-dir ./output
 
     # Process WhatsApp Business APK
     python whatsapp_clone.py w4b_base.apk --whatsapp-type 2 --mode 1
@@ -989,7 +989,8 @@ class ApkPackager:
         sign: bool = False,
         keystore: Optional[str] = None, 
         keypass: Optional[str] = None, 
-        keyalias: Optional[str] = None
+        keyalias: Optional[str] = None,
+        staging_dir: Optional[str] = None
     ) -> bool:
         """
         Direct 1:1 bitwise copy of base.apk, in-place removal of old signature blocks,
@@ -1003,7 +1004,9 @@ class ApkPackager:
             zipalign = ApkPackager.find_tool("zipalign")
             apksigner = ApkPackager.find_tool("apksigner")
             
-            stage_dir = os.path.join(os.path.dirname(unsigned_apk) or ".", "stage_update")
+            stage_root = staging_dir or os.path.dirname(unsigned_apk) or "."
+            os.makedirs(stage_root, exist_ok=True)
+            stage_dir = os.path.join(stage_root, "stage_update")
             if os.path.exists(stage_dir):
                 shutil.rmtree(stage_dir)
             os.makedirs(stage_dir, exist_ok=True)
@@ -1016,7 +1019,7 @@ class ApkPackager:
                         zc.extract(name, stage_dir)
                         update_files.append(name)
             
-            temp_copy = os.path.join(os.path.dirname(unsigned_apk) or ".", "temp_direct_copy.apk")
+            temp_copy = os.path.join(stage_root, "temp_direct_copy.apk")
             if os.path.exists(temp_copy):
                 os.remove(temp_copy)
             
@@ -1036,7 +1039,7 @@ class ApkPackager:
             else:
                 # Python fallback with metadata preservation
                 print(TerminalUI.colorize("  [2] In-place updating modified DEX and AndroidManifest (Python engine)...", TerminalUI.CYAN))
-                repack_unaligned = os.path.join(os.path.dirname(unsigned_apk) or ".", "temp_py_repack.apk")
+                repack_unaligned = os.path.join(stage_root, "temp_py_repack.apk")
                 def is_sig(n):
                     u = n.upper()
                     return u.startswith('META-INF/') and (u.endswith('.SF') or u.endswith('.RSA') or u.endswith('.DSA') or u.endswith('.EC') or u == 'META-INF/MANIFEST.MF')
@@ -1056,8 +1059,11 @@ class ApkPackager:
             shutil.rmtree(stage_dir, ignore_errors=True)
             
             # Step 3: Zipalign 4-byte
-            temp_aligned = os.path.join(os.path.dirname(unsigned_apk) or ".", "temp_aligned.apk")
+            temp_aligned = os.path.join(stage_root, "temp_aligned.apk")
             target_aligned = temp_aligned if sign else output_apk
+            
+            # Make sure parent directory of target output exists
+            os.makedirs(os.path.dirname(output_apk) or ".", exist_ok=True)
             
             if os.path.exists(target_aligned):
                 os.remove(target_aligned)
@@ -1118,6 +1124,8 @@ class WhatsAppCloner:
         self.sign_apk = False
         self.base_apk = None
         self.out_apk = None
+        self.out_dir = ToolConfig.get("OUTPUT_DIR", "dist")
+        self.auto_clean_build = (ToolConfig.get("AUTO_CLEAN_BUILD", "true").lower() in ("true", "1", "yes"))
         self.keystore = ToolConfig.get("KEYSTORE_PATH", "towartz.jks")
         self.keypass = ToolConfig.get("KEYSTORE_PASS", "pass:towartz123")
         self.keyalias = ToolConfig.get("KEYSTORE_ALIAS", "towartz")
@@ -1168,7 +1176,9 @@ class WhatsAppCloner:
         )
         parser.add_argument("--build", action="store_true", help="Automatically build & repack final cloned APK")
         parser.add_argument("--base-apk", help="Path to base.apk template for 1:1 direct-copy repack")
-        parser.add_argument("--out-apk", help="Output path for final APK (Default: <package>_ExactZip_cloned.apk)")
+        parser.add_argument("--out-dir", help=f"Directory for output APKs (Default: {self.out_dir})")
+        parser.add_argument("--out-apk", help="Output path for final APK (Default: <out-dir>/<package>_ExactZip_cloned.apk)")
+        parser.add_argument("--no-clean", action="store_true", help="Keep intermediate build and unsigned APK files")
         parser.add_argument("--sign", action="store_true", help="Sign the output APK with apksigner (Default: unsigned)")
         parser.add_argument("--keystore", help=f"Path to keystore .jks for signing (Default: {self.keystore})")
         parser.add_argument("--key-pass", help="Keystore password (default from config)")
@@ -1212,6 +1222,10 @@ class WhatsAppCloner:
             self.sign_apk = True
         if args.base_apk:
             self.base_apk = args.base_apk
+        if args.out_dir:
+            self.out_dir = args.out_dir
+        if args.no_clean:
+            self.auto_clean_build = False
         self.out_apk = args.out_apk
         
         if args.keystore:
@@ -1454,22 +1468,33 @@ class WhatsAppCloner:
             if not os.path.exists(base_apk_path):
                 print(TerminalUI.colorize(f"  [!] base.apk not found at: {base_apk_path}. Skipping APK packaging.", TerminalUI.YELLOW))
                 return
+            
+            out_directory = os.path.abspath(self.out_dir)
+            build_directory = os.path.join(out_directory, ".build")
+            os.makedirs(out_directory, exist_ok=True)
+            os.makedirs(build_directory, exist_ok=True)
                 
-            out_unsigned = os.path.join(base_dir, f"{self.config.new_package_name}_unsigned.apk")
-            out_apk = self.out_apk or os.path.join(base_dir, f"{self.config.new_package_name}_ExactZip_cloned.apk")
+            out_unsigned = os.path.join(build_directory, f"{self.config.new_package_name}_unsigned.apk")
+            out_apk = self.out_apk or os.path.join(out_directory, f"{self.config.new_package_name}_ExactZip_cloned.apk")
             
             print(TerminalUI.colorize("\n[*] Starting 1:1 Direct-Copy Exact ZIP Packaging Pipeline...", TerminalUI.BOLD + TerminalUI.CYAN))
             built = ApkPackager.build_with_apktool(self.config.root_folder, out_unsigned)
             if built:
-                ApkPackager.repack_exact_copy(
+                success = ApkPackager.repack_exact_copy(
                     base_apk=base_apk_path,
                     unsigned_apk=out_unsigned,
                     output_apk=out_apk,
                     sign=self.sign_apk,
                     keystore=self.keystore,
                     keypass=self.keypass,
-                    keyalias=self.keyalias
+                    keyalias=self.keyalias,
+                    staging_dir=build_directory
                 )
+                if success and self.auto_clean_build:
+                    try:
+                        shutil.rmtree(build_directory, ignore_errors=True)
+                    except Exception:
+                        pass
 
 
 def main():

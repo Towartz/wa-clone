@@ -6,3 +6,6 @@ __pycache__/
 *.idsig
 *.jks
 decompiled_*/
+dist/
+build/
+.build/

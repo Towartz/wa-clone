@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # WhatsApp Clone Tool - External Build Tools Configuration
 # ==============================================================================
 # Leave paths empty or commented out to automatically detect from Environment/PATH.
@@ -25,3 +25,9 @@ KEYSTORE_ALIAS=towartz
 
 # Default worker thread count for parallel Smali/XML processing
 DEFAULT_WORKERS=12
+
+# Output folder for final cloned APKs
+OUTPUT_DIR=dist
+
+# Automatically clean up intermediate build files (*_unsigned.apk, staging folders)
+AUTO_CLEAN_BUILD=true
