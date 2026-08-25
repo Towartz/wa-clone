@@ -1480,6 +1480,8 @@ class WhatsAppCloner:
             self.config.max_workers = int(default_workers_str)
         except ValueError:
             self.config.max_workers = 12
+            
+        self.decompiled_folder_name = ToolConfig.get("DECOMPILED_DIR", "decompiled_base")
         
     def display_intro(self):
         title = "WhatsApp Clone Tool"
@@ -1521,6 +1523,7 @@ class WhatsAppCloner:
         parser.add_argument("--build-only", "--skip-clone", action="store_true", help="Skip smali/XML cloning and build/repack current decompiled folder directly")
         parser.add_argument("--merge-only", action="store_true", help="Merge .apkm/.xapk/.apks bundle into standalone APK and exit")
         parser.add_argument("--base-apk", help="Path to base.apk template for 1:1 direct-copy repack")
+        parser.add_argument("--decompiled-dir", "--decompile-dir", help=f"Single canonical directory for decompiled files (Default: {self.decompiled_folder_name})")
         parser.add_argument("--out-dir", help=f"Directory for output APKs (Default: {self.out_dir})")
         parser.add_argument("--out-apk", help="Output path for final APK (Default: <out-dir>/<package>_ExactZip_cloned.apk)")
         parser.add_argument("--no-clean", action="store_true", help="Keep intermediate build and unsigned APK files")
@@ -1534,6 +1537,9 @@ class WhatsAppCloner:
         parser.add_argument("-h", "--help", action="store_true", help="Show help message and exit")
         
         args = parser.parse_args()
+        
+        if args.decompiled_dir:
+            self.decompiled_folder_name = args.decompiled_dir
         
         if args.help:
             show_help()
@@ -1572,8 +1578,7 @@ class WhatsAppCloner:
             if os.path.isfile(target_path) and target_path.lower().endswith(".apk"):
                 self.base_apk = target_path
                 self.build_apk = True
-                apk_stem = os.path.splitext(os.path.basename(target_path))[0]
-                decompiled_dir = os.path.join(os.path.dirname(target_path), f"decompiled_{apk_stem}")
+                decompiled_dir = os.path.join(os.path.dirname(target_path), self.decompiled_folder_name)
                 self.config.root_folder = decompiled_dir
                 
                 if args.clean and os.path.exists(decompiled_dir):
@@ -1783,8 +1788,7 @@ class WhatsAppCloner:
             if os.path.isfile(target_path) and target_path.lower().endswith(".apk"):
                 self.base_apk = target_path
                 self.build_apk = True
-                apk_stem = os.path.splitext(os.path.basename(target_path))[0]
-                decompiled_dir = os.path.join(os.path.dirname(target_path), f"decompiled_{apk_stem}")
+                decompiled_dir = os.path.join(os.path.dirname(target_path), self.decompiled_folder_name)
                 self.config.root_folder = decompiled_dir
                 
                 manifest_check = os.path.join(decompiled_dir, "AndroidManifest.xml")

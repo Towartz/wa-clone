@@ -32,5 +32,8 @@ OUTPUT_DIR=dist
 # Automatically clean up intermediate build files (*_unsigned.apk, staging folders)
 AUTO_CLEAN_BUILD=true
 
+# Single canonical decompiled folder name (prevents duplicate decompiled_* folders)
+DECOMPILED_DIR=decompiled_base
+
 # Check for tool updates (Apktool, APKEditor) on launch
 CHECK_TOOL_UPDATES=false
