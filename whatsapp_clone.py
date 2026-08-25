@@ -158,8 +158,15 @@ class TerminalUI:
         print(bl + bot_t.join([h * (w + 2) for w in col_widths]) + br)
 
 
-def render_progress_bar(task_name: str, current: int, total: int, start_time: float, bar_width: int = 20) -> None:
-    """Renders a single-line dynamic real-time progress bar without spamming."""
+def render_progress_bar(
+    task_name: str, 
+    current: int, 
+    total: int, 
+    start_time: float, 
+    stage_badge: str = "[*]",
+    bar_width: int = 20
+) -> None:
+    """Renders a clean single-line dynamic real-time progress bar with formatted metrics."""
     if total <= 0:
         return
     use_unicode = TerminalUI.supports_unicode()
@@ -177,13 +184,21 @@ def render_progress_bar(task_name: str, current: int, total: int, start_time: fl
     elapsed_str = time.strftime("%M:%S", time.gmtime(elapsed))
     eta_str = time.strftime("%M:%S", time.gmtime(eta))
     
-    # Clean single-line update with fixed width and trailing space clearing
-    short_task = f"{task_name[:14]:<14}"
-    msg = f"\r  {TerminalUI.colorize(short_task, TerminalUI.CYAN)} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] {percent:5.1f}% ({current}/{total}) [{elapsed_str}<{eta_str}, {rate:.0f}it/s]   \r"
-    sys.stdout.write(msg)
-    sys.stdout.flush()
-    if current >= total:
-        sys.stdout.write(f"\r  {TerminalUI.colorize(short_task, TerminalUI.CYAN)} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] 100.0% ({total}/{total}) [{elapsed_str}, {rate:.0f}it/s]   \n")
+    cur_fmt = f"{current:,}"
+    tot_fmt = f"{total:,}"
+    rate_fmt = f"{rate:,.0f} files/s"
+    task_label = f"{task_name:<16}"
+    
+    if current < total:
+        badge_colored = TerminalUI.colorize(stage_badge, TerminalUI.CYAN)
+        msg = f"\r  {badge_colored} {TerminalUI.colorize(task_label, TerminalUI.BOLD + TerminalUI.WHITE)} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] {percent:5.1f}% ({cur_fmt}/{tot_fmt}) [{elapsed_str}<{eta_str}, {rate_fmt}]\033[K\r"
+        sys.stdout.write(msg)
+        sys.stdout.flush()
+    else:
+        done_badge = "[✓]" if use_unicode else "[OK]"
+        badge_colored = TerminalUI.colorize(done_badge, TerminalUI.BOLD + TerminalUI.GREEN)
+        msg = f"\r  {badge_colored} {TerminalUI.colorize(task_label, TerminalUI.BOLD + TerminalUI.WHITE)} [{TerminalUI.colorize(bar, TerminalUI.GREEN)}] 100.0% ({tot_fmt} files) [{elapsed_str}, {rate_fmt}]\033[K\n"
+        sys.stdout.write(msg)
         sys.stdout.flush()
 
 
@@ -551,10 +566,11 @@ class FileProcessor:
     def process_file(self, file_path: str) -> bool:
         raise NotImplementedError("Subclasses must implement process_file()")
     
-    def process_all_files(self) -> Tuple[int, int]:
+    def process_all_files(self, stage_badge: str = "[*]", display_name: Optional[str] = None) -> Tuple[int, int]:
         files = self.get_files()
+        label = display_name or self.__class__.__name__
         if not files:
-            print(TerminalUI.colorize(f"  [-] No {self.__class__.__name__} files found to process.", TerminalUI.DIM))
+            print(TerminalUI.colorize(f"  [-] No {label} files found to process.", TerminalUI.DIM))
             return 0, 0
         
         total_files = len(files)
@@ -568,7 +584,7 @@ class FileProcessor:
                     success_count += 1
                 now = time.time()
                 if (now - last_update_time >= 0.08) or idx == total_files:
-                    render_progress_bar(self.__class__.__name__, idx, total_files, start_time)
+                    render_progress_bar(label, idx, total_files, start_time, stage_badge=stage_badge)
                     last_update_time = now
                     
         return total_files, success_count
@@ -1395,14 +1411,14 @@ class WhatsAppCloner:
         print()
         
         # Process SMALI
-        print(TerminalUI.colorize("[*] Processing .smali files across all multi-DEX folders...", TerminalUI.BOLD + TerminalUI.BLUE))
+        print(TerminalUI.colorize("[*] Remapping Dalvik bytecode across all multi-DEX folders...", TerminalUI.BOLD + TerminalUI.CYAN))
         smali_processor = SmaliProcessor(self.config)
-        total_smali, success_smali = smali_processor.process_all_files()
+        total_smali, success_smali = smali_processor.process_all_files(stage_badge="[1/2]", display_name="Smali Bytecode")
         
         # Process XML
-        print(TerminalUI.colorize("\n[*] Processing .xml files (AndroidManifest, Providers, Permissions, Filepaths)...", TerminalUI.BOLD + TerminalUI.BLUE))
+        print(TerminalUI.colorize("\n[*] Remapping AndroidManifest, Provider Authorities & Custom Permissions...", TerminalUI.BOLD + TerminalUI.CYAN))
         xml_processor = XmlProcessor(self.config)
-        total_xml, success_xml = xml_processor.process_all_files()
+        total_xml, success_xml = xml_processor.process_all_files(stage_badge="[2/2]", display_name="XML Resources")
         
         # Summary
         print()
