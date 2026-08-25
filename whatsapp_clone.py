@@ -464,6 +464,7 @@ OPTIONS:
                           1 = Auto (uses default package names)
                           2 = Custom Base to Clone (specify custom package name)
                           3 = Custom ALL (Clone of Cloned Base with custom search pattern)
+                          4 = Build & Repack Only (Skip cloning, directly compile & repack)
 
     --package STRING      New package name without 'com.' prefix (e.g. 'towartz.wa')
                           (Required with --mode 2 or 3)
@@ -476,6 +477,7 @@ OPTIONS:
 
     --build               Automatically recompile with Apktool and package final cloned APK
                           (Enabled automatically if input is an APK file)
+    --build-only          Skip smali/XML cloning and build/repack current decompiled folder directly
     --base-apk FILE       Path to original base.apk template for 1:1 direct-copy exact ZIP repack
     --out-dir DIR         Directory for output APKs (Default from config: dist)
     --out-apk FILE        Output path for final APK (Default: <out-dir>/<package>_ExactZip_cloned.apk)
@@ -489,6 +491,9 @@ OPTIONS:
 EXAMPLES:
     # 1-Click Fully Automated: Decompile base.apk, clone, and package output into dist/
     python whatsapp_clone.py base.apk --mode 2 --package mywa --name MyWA
+
+    # Build & Repack existing decompiled folder directly (skips smali/XML cloning)
+    python whatsapp_clone.py ./decompiled_base --build-only --base-apk base.apk
 
     # Clone already-decompiled folder and build unsigned exact ZIP APK into custom folder
     python whatsapp_clone.py ./decompiled_apk --mode 2 --package mywa --name MyWA --build --base-apk base.apk --out-dir ./output
@@ -1122,6 +1127,7 @@ class WhatsAppCloner:
         self.config = WhatsAppCloneConfig()
         self.build_apk = False
         self.sign_apk = False
+        self.skip_cloning = False
         self.base_apk = None
         self.out_apk = None
         self.out_dir = ToolConfig.get("OUTPUT_DIR", "dist")
@@ -1164,8 +1170,8 @@ class WhatsAppCloner:
             help="WhatsApp type: 1 for WhatsApp, 2 for WhatsApp Business, 3 for Custom/Auto"
         )
         parser.add_argument(
-            "--mode", type=int, choices=[1, 2, 3],
-            help="Mode: 1 for Auto, 2 for Custom Base, 3 for Custom ALL"
+            "--mode", type=int, choices=[1, 2, 3, 4],
+            help="Mode: 1 for Auto, 2 for Custom Base, 3 for Custom ALL, 4 for Build-Only"
         )
         parser.add_argument("--package", help="New package name without 'com.' prefix (e.g. 'mywa')")
         parser.add_argument("--name", help="New storage folder name (e.g. 'MyWhatsApp')")
@@ -1175,6 +1181,7 @@ class WhatsAppCloner:
             help=f"Number of worker threads for parallel processing (Default from config: {self.config.max_workers})"
         )
         parser.add_argument("--build", action="store_true", help="Automatically build & repack final cloned APK")
+        parser.add_argument("--build-only", "--skip-clone", action="store_true", help="Skip smali/XML cloning and build/repack current decompiled folder directly")
         parser.add_argument("--base-apk", help="Path to base.apk template for 1:1 direct-copy repack")
         parser.add_argument("--out-dir", help=f"Directory for output APKs (Default: {self.out_dir})")
         parser.add_argument("--out-apk", help="Output path for final APK (Default: <out-dir>/<package>_ExactZip_cloned.apk)")
@@ -1218,6 +1225,9 @@ class WhatsAppCloner:
             self.config.max_workers = args.workers
         if args.build:
             self.build_apk = True
+        if args.build_only:
+            self.skip_cloning = True
+            self.build_apk = True
         if args.sign:
             self.sign_apk = True
         if args.base_apk:
@@ -1240,7 +1250,7 @@ class WhatsAppCloner:
         if args.key_alias:
             self.keyalias = args.key_alias
         
-        if args.folder and args.mode:
+        if args.folder and (args.mode or args.build_only):
             self.setup_from_args(args)
             return True
         else:
@@ -1259,7 +1269,12 @@ class WhatsAppCloner:
             self.config.detect_from_manifest()
             default_pkg = "universe.messenger"
             
-        if args.mode == 1:
+        if args.build_only or args.mode == 4:
+            self.skip_cloning = True
+            self.build_apk = True
+            self.config.new_package_name = self.config.detected_base_pkg.removeprefix("com.")
+            self.config.new_folder_name = self.config.current_folder_name
+        elif args.mode == 1:
             self.config.new_package_name = default_pkg
             self.config.new_folder_name = self.config.current_folder_name
         elif args.mode == 2:
@@ -1303,7 +1318,7 @@ class WhatsAppCloner:
         try:
             for d in sorted(os.listdir(cwd)):
                 full_dir = os.path.join(cwd, d)
-                if os.path.isdir(full_dir) and d not in ("build", ".cache", ".git", "dist", "stage_update", "__pycache__"):
+                if os.path.isdir(full_dir) and d not in ("build", ".cache", ".git", "dist", "stage_update", "__pycache__", ".build"):
                     manifest = os.path.join(full_dir, "AndroidManifest.xml")
                     if os.path.exists(manifest):
                         candidates.append((full_dir, "Decompiled Folder", "AndroidManifest.xml found"))
@@ -1384,7 +1399,8 @@ class WhatsAppCloner:
         mode_options = [
             ("Auto", "Default clone package (com.universe.messenger)"),
             ("Custom Package", "Clone base to new custom package name (e.g. towartz.wa)"),
-            ("Custom ALL", "Clone of Cloned base with custom search pattern")
+            ("Custom ALL", "Clone of Cloned base with custom search pattern"),
+            ("Build & Repack Only", "Skip cloning smali/XML - compile & repack current folder directly")
         ]
         sel_mode = InteractiveMenu.select("Select Operation Mode", mode_options, default_index=1)
         mode = str(sel_mode + 1)
@@ -1397,11 +1413,16 @@ class WhatsAppCloner:
             pkg_input = input(TerminalUI.colorize("\nEnter new package name without 'com.' prefix (e.g. 'towartz.wa') [default: 'towartz.wa']: ", TerminalUI.CYAN)).strip() or "towartz.wa"
             self.config.new_package_name = pkg_input.removeprefix("com.")
             self.config.new_folder_name = input(TerminalUI.colorize(f"Enter new storage folder name [default: '{self.config.current_folder_name}']: ", TerminalUI.CYAN)).strip() or self.config.current_folder_name
-        else:
+        elif mode == "3":
             pkg_input = input(TerminalUI.colorize("\nEnter new package name without 'com.' prefix [default: 'towartz.wa']: ", TerminalUI.CYAN)).strip() or "towartz.wa"
             self.config.new_package_name = pkg_input.removeprefix("com.")
             self.config.new_folder_name = input(TerminalUI.colorize(f"Enter new storage folder name [default: '{self.config.current_folder_name}']: ", TerminalUI.CYAN)).strip() or self.config.current_folder_name
             self.config.custom_search_pattern = input(TerminalUI.colorize(f"Enter custom search pattern to replace [default: '{self.config.detected_base_pkg}']: ", TerminalUI.CYAN)).strip() or self.config.detected_base_pkg
+        elif mode == "4":
+            self.skip_cloning = True
+            self.build_apk = True
+            self.config.new_package_name = self.config.detected_base_pkg.removeprefix("com.")
+            self.config.new_folder_name = self.config.current_folder_name
             
         self.config.new_package_name_path = self.config.new_package_name.replace(".", "/")
     
@@ -1424,29 +1445,32 @@ class WhatsAppCloner:
         self.config.display_config()
         print()
         
-        # Process SMALI
-        print(TerminalUI.colorize("[*] Remapping Dalvik bytecode across all multi-DEX folders...", TerminalUI.BOLD + TerminalUI.CYAN))
-        smali_processor = SmaliProcessor(self.config)
-        total_smali, success_smali = smali_processor.process_all_files(stage_badge="[1/2]", display_name="Smali Bytecode")
-        
-        # Process XML
-        print(TerminalUI.colorize("\n[*] Remapping AndroidManifest, Provider Authorities & Custom Permissions...", TerminalUI.BOLD + TerminalUI.CYAN))
-        xml_processor = XmlProcessor(self.config)
-        total_xml, success_xml = xml_processor.process_all_files(stage_badge="[2/2]", display_name="XML Resources")
-        
-        # Summary
-        print()
-        headers = ["File Type", "Total Files", "Processed", "Success Rate"]
-        smali_rate = f"{(success_smali/total_smali)*100:.1f}%" if total_smali > 0 else "N/A"
-        xml_rate = f"{(success_xml/total_xml)*100:.1f}%" if total_xml > 0 else "N/A"
-        
-        rows = [
-            ["SMALI Bytecode", str(total_smali), str(success_smali), TerminalUI.colorize(smali_rate, TerminalUI.GREEN)],
-            ["XML Resources", str(total_xml), str(success_xml), TerminalUI.colorize(xml_rate, TerminalUI.GREEN)]
-        ]
-        TerminalUI.print_table("Operation Summary", headers, rows)
-        success_icon = "[✓]" if TerminalUI.supports_unicode() else "[OK]"
-        print(TerminalUI.colorize(f"\n{success_icon} WhatsApp cloning completed successfully!\n", TerminalUI.BOLD + TerminalUI.GREEN))
+        if not self.skip_cloning:
+            # Process SMALI
+            print(TerminalUI.colorize("[*] Remapping Dalvik bytecode across all multi-DEX folders...", TerminalUI.BOLD + TerminalUI.CYAN))
+            smali_processor = SmaliProcessor(self.config)
+            total_smali, success_smali = smali_processor.process_all_files(stage_badge="[1/2]", display_name="Smali Bytecode")
+            
+            # Process XML
+            print(TerminalUI.colorize("\n[*] Remapping AndroidManifest, Provider Authorities & Custom Permissions...", TerminalUI.BOLD + TerminalUI.CYAN))
+            xml_processor = XmlProcessor(self.config)
+            total_xml, success_xml = xml_processor.process_all_files(stage_badge="[2/2]", display_name="XML Resources")
+            
+            # Summary
+            print()
+            headers = ["File Type", "Total Files", "Processed", "Success Rate"]
+            smali_rate = f"{(success_smali/total_smali)*100:.1f}%" if total_smali > 0 else "N/A"
+            xml_rate = f"{(success_xml/total_xml)*100:.1f}%" if total_xml > 0 else "N/A"
+            
+            rows = [
+                ["SMALI Bytecode", str(total_smali), str(success_smali), TerminalUI.colorize(smali_rate, TerminalUI.GREEN)],
+                ["XML Resources", str(total_xml), str(success_xml), TerminalUI.colorize(xml_rate, TerminalUI.GREEN)]
+            ]
+            TerminalUI.print_table("Operation Summary", headers, rows)
+            success_icon = "[✓]" if TerminalUI.supports_unicode() else "[OK]"
+            print(TerminalUI.colorize(f"\n{success_icon} WhatsApp cloning completed successfully!\n", TerminalUI.BOLD + TerminalUI.GREEN))
+        else:
+            print(TerminalUI.colorize("[*] Build-Only Mode: Skipping Smali & XML cloning steps.\n", TerminalUI.BOLD + TerminalUI.YELLOW))
         
         # Check automatic build/repack
         base_dir = os.path.dirname(self.config.root_folder) or "."
